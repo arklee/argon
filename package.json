@@ -5,6 +5,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "argon": "./dist/tui/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,6 +16,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "tui": "node dist/tui/cli.js",
     "test": "vitest --run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
