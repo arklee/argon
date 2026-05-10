@@ -1,6 +1,7 @@
 import type { AgentRuntimeConfig, AgentEvent, AgentMessage, RunOptions, UserInput } from "./types.js";
 import { runTurn } from "./loop/run-turn.js";
 import { JsonlSessionEventLog, type SessionEventLog } from "./session/event-log.js";
+import type { SessionManager } from "./session/manager.js";
 import { Transcript } from "./session/transcript.js";
 import { createDefaultTools } from "./tools/index.js";
 
@@ -8,11 +9,20 @@ export class AgentRuntime {
   private readonly transcript = new Transcript();
   private readonly eventLog: SessionEventLog | undefined;
   private readonly tools;
+  private session: SessionManager | undefined;
   private activeAbortController: AbortController | undefined;
+  private pendingSessionTurn:
+    | {
+        context: Extract<AgentEvent, { type: "turn_start" }>["context"];
+        reasoning: RunOptions["reasoning"] | undefined;
+      }
+    | undefined;
 
   constructor(private readonly config: AgentRuntimeConfig) {
     this.tools = config.tools ?? createDefaultTools(config.cwd);
     this.eventLog = config.eventLogPath ? new JsonlSessionEventLog(config.eventLogPath) : undefined;
+    this.session = config.session;
+    this.hydrateFromSession();
   }
 
   async *run(input: UserInput, options: RunOptions = {}): AsyncIterable<AgentEvent> {
@@ -38,6 +48,7 @@ export class AgentRuntime {
         stream: this.config.stream,
         options: runOptions
       })) {
+        this.persistSessionEvent(event, runOptions);
         await this.eventLog?.append(event);
         yield event;
       }
@@ -50,8 +61,49 @@ export class AgentRuntime {
     return this.transcript.snapshot();
   }
 
+  getSession(): SessionManager | undefined {
+    return this.session;
+  }
+
+  switchSession(session: SessionManager): void {
+    if (this.activeAbortController) {
+      throw new Error("Cannot switch sessions while Argon is running");
+    }
+    this.session = session;
+    this.hydrateFromSession();
+  }
+
   abort(): void {
     this.activeAbortController?.abort();
+  }
+
+  private hydrateFromSession(): void {
+    if (!this.session) return;
+    this.transcript.replace(this.session.buildContext().messages);
+  }
+
+  private persistSessionEvent(event: AgentEvent, options: RunOptions): void {
+    if (!this.session) return;
+    if (event.type === "turn_start") {
+      this.pendingSessionTurn = { context: event.context, reasoning: options.reasoning };
+    } else if (event.type === "message_end") {
+      if (event.message.role === "user") {
+        this.flushPendingSessionTurn();
+        this.session.appendMessage(event.message);
+      } else if (event.message.role === "assistant") {
+        this.session.appendMessage(event.message);
+      }
+    } else if (event.type === "tool_result") {
+      this.session.appendMessage(event.result);
+    }
+  }
+
+  private flushPendingSessionTurn(): void {
+    if (!this.session || !this.pendingSessionTurn) return;
+    const { context, reasoning } = this.pendingSessionTurn;
+    this.session.appendModelChange(context.model.provider, context.model.id);
+    this.session.appendTurnContext(context, reasoning);
+    this.pendingSessionTurn = undefined;
   }
 }
 

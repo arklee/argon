@@ -36,6 +36,13 @@ describe("TUI options", () => {
     expect(parsed.error).toBe("Unknown argument: --max-iterations");
   });
 
+  it("parses session resume flags", () => {
+    expect(parseTuiArgs(["--continue"], {}).options).toMatchObject({ continueSession: true });
+    expect(parseTuiArgs(["-r"], {}).options).toMatchObject({ resume: true });
+    expect(parseTuiArgs(["--session", "abc123"], {}).options).toMatchObject({ session: "abc123" });
+    expect(parseTuiArgs(["--no-session"], {}).options).toMatchObject({ noSession: true });
+  });
+
   it("reports missing flag values", () => {
     const parsed = parseTuiArgs(["--model"], {});
     expect(parsed.error).toContain("Missing value");
@@ -165,6 +172,9 @@ describe("Interactive TUI commands", () => {
       action: "message",
       message: expect.stringContaining("messages=4")
     });
+    expect(resolveSlashCommand("/session", context)).toMatchObject({ handled: true, action: "message" });
+    expect(resolveSlashCommand("/resume", context)).toMatchObject({ handled: true, action: "resume" });
+    expect(resolveSlashCommand("/tree", context)).toMatchObject({ handled: true, action: "tree" });
     expect(resolveSlashCommand("/clear", context)).toMatchObject({ handled: true, action: "clear" });
     expect(resolveSlashCommand("/exit", context)).toMatchObject({ handled: true, action: "exit" });
     expect(resolveSlashCommand("hello", context)).toEqual({ handled: false });
@@ -176,7 +186,16 @@ describe("Interactive TUI commands", () => {
       action: "message",
       message: "Unknown command: /bogus"
     });
-    expect(TUI_SLASH_COMMANDS.map((command) => command.name)).toEqual(["help", "status", "clear", "exit", "quit"]);
+    expect(TUI_SLASH_COMMANDS.map((command) => command.name)).toEqual([
+      "help",
+      "status",
+      "session",
+      "resume",
+      "tree",
+      "clear",
+      "exit",
+      "quit"
+    ]);
   });
 });
 

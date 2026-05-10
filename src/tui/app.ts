@@ -11,16 +11,21 @@ import {
   type SlashCommand
 } from "@earendil-works/pi-tui";
 import { AgentRuntime } from "../runtime.js";
-import type { AgentEvent, RunOptions } from "../types.js";
+import { SessionManager, type SessionInfo, type SessionTreeNode } from "../session/manager.js";
+import type { AgentEvent, AgentMessage, RunOptions } from "../types.js";
 import { compactText, renderToolCall, renderToolResult } from "./events.js";
 import { createArgonTuiTheme, type ArgonTuiTheme } from "./theme.js";
 import type { TuiOptions } from "./options.js";
+import { PickerComponent, type SelectionItem } from "./selectors.js";
 
-const COMMAND_HELP = "Commands: /help, /status, /clear, /exit";
+const COMMAND_HELP = "Commands: /help, /status, /session, /resume, /tree, /clear, /exit";
 
 export const TUI_SLASH_COMMANDS: SlashCommand[] = [
   { name: "help", description: "Show available commands" },
   { name: "status", description: "Show model, cwd, and message count" },
+  { name: "session", description: "Show current session details" },
+  { name: "resume", description: "Resume a previous session" },
+  { name: "tree", description: "Navigate the current session tree" },
   { name: "clear", description: "Clear chat messages" },
   { name: "exit", description: "Exit Argon" },
   { name: "quit", description: "Exit Argon" }
@@ -30,13 +35,17 @@ export type SlashCommandResult =
   | { handled: false }
   | { handled: true; action: "message"; message: string }
   | { handled: true; action: "clear"; message: string }
-  | { handled: true; action: "exit" };
+  | { handled: true; action: "exit" }
+  | { handled: true; action: "resume" }
+  | { handled: true; action: "tree" };
 
 export interface SlashCommandContext {
   provider: string;
   modelId: string;
   cwd: string;
   messageCount: number;
+  sessionFile?: string | undefined;
+  sessionId?: string | undefined;
   configPath?: string | undefined;
 }
 
@@ -49,6 +58,7 @@ export interface InteractiveTuiView {
   addAssistantMessage(): MutableTuiMessage;
   addThinkingMessage(): MutableTuiMessage;
   addStatusMessage(text: string): void;
+  renderMessages?(messages: AgentMessage[]): void;
   clearMessages(): void;
   setRunning(running: boolean): void;
   requestRender(): void;
@@ -148,8 +158,20 @@ export function resolveSlashCommand(input: string, context: SlashCommandContext)
       return {
         handled: true,
         action: "message",
-        message: `model=${context.provider}/${context.modelId} cwd=${context.cwd} messages=${context.messageCount}${context.configPath ? ` config=${context.configPath}` : ""}`
+        message: `model=${context.provider}/${context.modelId} cwd=${context.cwd} messages=${context.messageCount}${context.sessionId ? ` session=${context.sessionId}` : ""}${context.configPath ? ` config=${context.configPath}` : ""}`
       };
+    case "/session":
+      return {
+        handled: true,
+        action: "message",
+        message: context.sessionFile
+          ? `session=${context.sessionId ?? "(unknown)"} file=${context.sessionFile} messages=${context.messageCount}`
+          : "session persistence is disabled"
+      };
+    case "/resume":
+      return { handled: true, action: "resume" };
+    case "/tree":
+      return { handled: true, action: "tree" };
     case "/clear":
       return { handled: true, action: "clear", message: "Cleared chat messages." };
     case "/exit":
@@ -231,6 +253,9 @@ class ArgonInteractiveTui {
 
     this.tui.setFocus(this.editor);
     this.view.showWelcome();
+    if (this.runtime.messages().length > 0) {
+      this.view.renderMessages(this.runtime.messages());
+    }
   }
 
   private async submit(text: string): Promise<void> {
@@ -239,12 +264,14 @@ class ArgonInteractiveTui {
     const trimmed = text.trim();
     if (!trimmed) return;
 
+    const activeSession = this.runtime.getSession();
     const command = resolveSlashCommand(trimmed, {
       provider: this.options.provider,
       modelId: this.options.modelId,
       cwd: this.options.cwd,
       messageCount: this.runtime.messages().length,
-      configPath: this.options.configPath
+      ...(activeSession ? { sessionFile: activeSession.getSessionFile(), sessionId: activeSession.getSessionId() } : {}),
+      ...(this.options.configPath ? { configPath: this.options.configPath } : {})
     });
 
     if (command.handled) {
@@ -253,6 +280,10 @@ class ArgonInteractiveTui {
       } else if (command.action === "clear") {
         this.view.clearMessages();
         this.view.addStatusMessage(this.theme.ansi.dim(command.message));
+      } else if (command.action === "resume") {
+        await this.handleResumeCommand();
+      } else if (command.action === "tree") {
+        await this.handleTreeCommand();
       } else {
         this.view.addStatusMessage(this.theme.ansi.dim(command.message));
       }
@@ -280,6 +311,69 @@ class ArgonInteractiveTui {
       this.tui.setFocus(this.editor);
       this.view.requestRender();
     }
+  }
+
+  private async handleResumeCommand(): Promise<void> {
+    const sessions = SessionManager.list(this.options.cwd);
+    if (sessions.length === 0) {
+      this.view.addStatusMessage(this.theme.ansi.dim("No sessions found for this cwd."));
+      return;
+    }
+    const selected = await this.pick("Resume Session", sessionItems(sessions));
+    if (!selected) {
+      this.view.addStatusMessage(this.theme.ansi.dim("Resume cancelled."));
+      return;
+    }
+    try {
+      this.runtime.switchSession(SessionManager.open(selected));
+      this.view.renderMessages(this.runtime.messages());
+      this.view.addStatusMessage(this.theme.ansi.dim(`Resumed ${this.runtime.getSession()?.getSessionId() ?? selected}`));
+    } catch (error) {
+      this.view.addStatusMessage(`error ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleTreeCommand(): Promise<void> {
+    const session = this.runtime.getSession();
+    if (!session) {
+      this.view.addStatusMessage(this.theme.ansi.dim("Session persistence is disabled."));
+      return;
+    }
+    const rows = session.tree();
+    if (rows.length === 0) {
+      this.view.addStatusMessage(this.theme.ansi.dim("Session tree is empty."));
+      return;
+    }
+    const selected = await this.pick("Session Tree", treeItems(rows));
+    if (!selected) {
+      this.view.addStatusMessage(this.theme.ansi.dim("Tree navigation cancelled."));
+      return;
+    }
+    try {
+      session.branchTo(selected, "selected from /tree");
+      this.runtime.switchSession(session);
+      this.view.renderMessages(this.runtime.messages());
+      this.view.addStatusMessage(this.theme.ansi.dim("Moved to selected session point."));
+    } catch (error) {
+      this.view.addStatusMessage(`error ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async pick(title: string, items: SelectionItem[]): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const picker = new PickerComponent(title, items, this.theme.editor.selectList, (value) => {
+        handle.hide();
+        this.tui.setFocus(this.editor);
+        resolve(value);
+      });
+      const handle = this.tui.showOverlay(picker, {
+        anchor: "center",
+        width: "90%",
+        margin: 1
+      });
+      handle.focus();
+      this.view.requestRender();
+    });
   }
 
   private async shutdown(): Promise<void> {
@@ -333,6 +427,19 @@ class PiTuiConversationView implements InteractiveTuiView {
   addStatusMessage(text: string): void {
     this.removeLoader();
     this.addComponent(new Text(text, 1, 0));
+  }
+
+  renderMessages(messages: AgentMessage[]): void {
+    this.clearMessages();
+    for (const message of messages) {
+      if (message.role === "user") {
+        this.addUserMessage(messageText(message));
+      } else if (message.role === "assistant") {
+        this.addMarkdown(`**assistant**\n\n${messageText(message) || "_(no text)_"}`);
+      } else if (message.role === "toolResult") {
+        this.addStatusMessage(renderToolResult(message, this.options.color && Boolean(process.stdout.isTTY)));
+      }
+    }
   }
 
   clearMessages(): void {
@@ -412,4 +519,30 @@ class PiTuiConversationView implements InteractiveTuiView {
     const cwd = compactText(this.options.cwd, 72);
     return `${this.theme.ansi.bold("Argon")} ${mode} ${this.options.provider}/${this.options.modelId} cwd=${cwd}${config}`;
   }
+}
+
+function sessionItems(sessions: SessionInfo[]): SelectionItem[] {
+  return sessions.map((session) => ({
+    value: session.path,
+    label: session.id.slice(0, 8),
+    description: `${session.messageCount} messages  ${compactText(session.firstMessage, 90)}`
+  }));
+}
+
+function treeItems(rows: SessionTreeNode[]): SelectionItem[] {
+  return rows.map((row) => ({
+    value: row.entry.id,
+    label: `${row.current ? "*" : " "} ${"  ".repeat(row.depth)}${row.entry.type}`,
+    description: compactText(row.preview, 100)
+  }));
+}
+
+function messageText(message: AgentMessage): string {
+  const content = "content" in message ? message.content : undefined;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block): block is { type: "text"; text: string } => typeof block === "object" && block !== null && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n");
 }

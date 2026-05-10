@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,7 +10,7 @@ import {
   Type,
   type FauxProviderRegistration
 } from "@earendil-works/pi-ai";
-import { AgentRuntime, createReadTool, type AgentEvent, type ToolRuntime } from "../src/index.js";
+import { AgentRuntime, SessionManager, createReadTool, type AgentEvent, type ToolRuntime } from "../src/index.js";
 
 async function collect(iterable: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
   const events: AgentEvent[] = [];
@@ -54,6 +55,43 @@ describe("AgentRuntime loop", () => {
     expect(runtime.messages().map((message) => message.role)).toEqual(["user", "assistant"]);
   });
 
+  it("persists a new session and resumes previous messages", async () => {
+    const cwd = await tempDir();
+    const sessionDir = join(cwd, ".sessions");
+    const session = SessionManager.create(cwd, sessionDir);
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([fauxAssistantMessage("hello")]);
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd,
+      tools: [],
+      apiKey: "test",
+      session
+    });
+
+    expect(existsSync(session.getSessionFile())).toBe(false);
+    await collect(runtime.run("hi"));
+    expect(existsSync(session.getSessionFile())).toBe(true);
+    const reopened = SessionManager.open(session.getSessionFile(), sessionDir);
+    expect(reopened.buildContext().messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+
+    faux.setResponses([
+      (context) => {
+        expect(context.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+        return fauxAssistantMessage("again");
+      }
+    ]);
+    const resumed = new AgentRuntime({
+      model: faux.getModel(),
+      cwd,
+      tools: [],
+      apiKey: "test",
+      session: reopened
+    });
+    await collect(resumed.run("continue"));
+  });
+
   it("executes a tool call and continues with the tool result in context", async () => {
     const cwd = await tempDir();
     await writeFile(join(cwd, "note.txt"), "from tool", "utf8");
@@ -78,6 +116,33 @@ describe("AgentRuntime loop", () => {
     const events = await collect(runtime.run("read it"));
     expect(events.some((event) => event.type === "tool_result")).toBe(true);
     expect(runtime.messages().map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "assistant"
+    ]);
+  });
+
+  it("persists tool call continuation records", async () => {
+    const cwd = await tempDir();
+    const session = SessionManager.create(cwd, join(cwd, ".sessions"));
+    await writeFile(join(cwd, "note.txt"), "from tool", "utf8");
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("read", { path: "note.txt" }, { id: "call-read" })),
+      fauxAssistantMessage("done")
+    ]);
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd,
+      tools: [createReadTool()],
+      apiKey: "test",
+      session
+    });
+    await collect(runtime.run("read it"));
+
+    expect(SessionManager.open(session.getSessionFile()).buildContext().messages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
       "toolResult",
