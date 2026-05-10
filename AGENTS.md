@@ -4,11 +4,16 @@
 
 These instructions apply to the entire Argon repository. More specific `AGENTS.md` files in child directories override this file for their subtree.
 
-Argon is a Node.js + TypeScript coding agent. It reuses provider support from the npm package `@earendil-works/pi-ai`, implements its own Codex-like agent loop, and may expose both a TUI and a Tauri-based GUI. Keep the core agent runtime independent from any UI surface.
+Argon is a Node.js + TypeScript coding agent. It reuses provider support from the npm package `@earendil-works/pi-ai` and terminal UI primitives from `@earendil-works/pi-tui`, implements its own Codex-like agent loop, and may expose both a TUI and a Tauri-based GUI. Keep the core agent runtime independent from any UI surface.
+
+## Reference Source Repositories
+
+- When the user asks to analyze or compare Codex or pi-coding-agent source code, inspect the local source repositories at `~/Code/agent-playground/codex` and `~/Code/agent-playground/pi`.
 
 ## Architecture Principles
 
 - Keep `@earendil-works/pi-ai` as the provider boundary. Use its `Context`, `Message`, `Tool`, `AssistantMessageEvent`, and `streamSimple()` abstractions instead of adding provider-specific SDK paths.
+- Keep `@earendil-works/pi-tui` as the TUI rendering/input boundary. Use its `TUI`, `ProcessTerminal`, `Editor`, `Markdown`, autocomplete, keybinding, and component abstractions instead of hand-rolling terminal diffing, raw input parsing, or editor behavior.
 - Treat the provider layer as a thin adapter for model invocation, API key resolution, abort handling, reasoning/session options, and event normalization. Do not build a separate Responses-vs-Chat adapter layer unless explicitly requested.
 - Keep the agent loop as a deterministic turn state machine: immutable `TurnContext`, append-only transcript updates, streamed `AgentEvent`s, collected tool calls, tool result messages, and explicit continuation reasons.
 - Keep prompt management layered internally and flattened externally into a single `systemPrompt` for pi-ai. Project instructions should be discovered from `AGENTS.md` files in root-to-cwd order.
@@ -24,7 +29,7 @@ Argon is a Node.js + TypeScript coding agent. It reuses provider support from th
 - `src/tools/`: local tool definitions, registry, execution helpers, and bounded result formatting.
 - `src/session/`: transcript and event log abstractions.
 - `src/index.ts`: public exports for consumers, TUI, and GUI.
-- TUI code should remain a presentation layer over the core runtime.
+- TUI code should remain a presentation layer over the core runtime and should compose `@earendil-works/pi-tui` components for terminal rendering, input, autocomplete, and focus management.
 - Tauri code should route commands through the core runtime or backend adapters; avoid duplicating agent logic in the frontend.
 
 ## Coding Style
@@ -33,7 +38,7 @@ Argon is a Node.js + TypeScript coding agent. It reuses provider support from th
 - Prefer small modules with clear ownership over broad utility files.
 - Preserve existing public interfaces unless the requested change requires a breaking update.
 - Keep runtime state explicit and localized. Avoid process-wide mutable state except for deliberate lifecycle controls such as an `AbortController` owned by `AgentRuntime`.
-- Keep dependencies minimal. Do not add provider SDK dependencies when pi-ai already covers the provider capability.
+- Keep dependencies minimal. Do not add provider SDK dependencies when pi-ai already covers the provider capability, and do not add terminal UI/input libraries when pi-tui already covers the TUI capability.
 - Use structured parsing or existing APIs when available; avoid brittle string parsing for model messages, tool calls, or project metadata.
 - Bound long outputs and file reads. Shell and search tools should support timeouts and abort signals.
 - Never commit secrets, API keys, local credentials, or machine-specific private paths beyond intentional test fixtures.
@@ -68,6 +73,7 @@ Argon is a Node.js + TypeScript coding agent. It reuses provider support from th
 ## UI Rules
 
 - TUI and GUI should render core events rather than infer state from raw provider streams.
+- TUI features should be built on `@earendil-works/pi-tui` components and themes; keep Argon-specific code focused on mapping `AgentEvent`s and commands into presentation state.
 - Keep cancellation, streaming display, tool-call status, and errors modeled from `AgentEvent`.
 - Tauri frontend code should not access filesystem, shell, or provider credentials directly; route those operations through the backend/core boundary.
 - Shared UI state should be derived from transcript and event log data where practical, not from duplicated agent-loop logic.
@@ -79,6 +85,22 @@ Argon is a Node.js + TypeScript coding agent. It reuses provider support from th
 - Use temporary directories for local tool tests.
 - Cover at least: plain one-turn completion, tool call continuation, tool errors, max-iteration stopping, abort handling, prompt assembly, and bounded tool output.
 - UI tests should remain separate from core loop tests. The core runtime must stay testable without launching a TUI or Tauri app.
+
+## Git Workflow
+
+- For feature-sized work, multi-file refactors, or architectural changes, create a new branch before editing.
+- Use the `codex/` prefix for Codex-created branches unless the user requests a different branch name.
+- Before branching, check `git status` and avoid mixing unrelated local changes.
+- Run focused tests, typecheck, and build as appropriate before merging.
+- Do not merge back to the main branch automatically unless the user explicitly asks.
+- Simple fixes may be done on the current branch when the change is narrow and low risk.
+
+## Documentation maintenance
+
+After completing any task that changes module behavior, public APIs, or architectural decisions, before declaring done:
+1. Check if AGENTS.md or the relevant module's docs/*.md is now stale
+2. If yes, update it in the same commit
+3. If the change introduces a new concept worth documenting, propose a new doc file rather than bloating AGENTS.md
 
 ## Working Agreement
 
