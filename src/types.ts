@@ -10,6 +10,7 @@ import type {
   ToolResultMessage,
   UserMessage
 } from "@earendil-works/pi-ai";
+import type { SessionManager } from "./session/manager.js";
 
 export type AgentMessage = Message;
 
@@ -133,6 +134,7 @@ export interface AgentRuntimeConfig {
   sessionId?: string | undefined;
   stream?: StreamProvider | undefined;
   eventLogPath?: string | undefined;
+  session?: SessionManager | undefined;
 }
 
 export interface RunTurnParams {

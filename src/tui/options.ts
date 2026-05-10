@@ -14,6 +14,10 @@ export interface TuiOptions {
   color: boolean;
   configPath?: string;
   once?: string;
+  continueSession?: boolean;
+  resume?: boolean;
+  session?: string;
+  noSession?: boolean;
   apiKey?: string;
   apiKeyEnv?: string;
   eventLogPath?: string;
@@ -81,6 +85,28 @@ export function parseTuiArgs(args: string[], env: NodeJS.ProcessEnv = process.en
       const value = readValue(args, ++index, arg);
       if ("error" in value) return value;
       options.once = value.value;
+      continue;
+    }
+
+    if (arg === "--continue" || arg === "-c") {
+      options.continueSession = true;
+      continue;
+    }
+
+    if (arg === "--resume" || arg === "-r") {
+      options.resume = true;
+      continue;
+    }
+
+    if (arg === "--session") {
+      const value = readValue(args, ++index, arg);
+      if ("error" in value) return value;
+      options.session = value.value;
+      continue;
+    }
+
+    if (arg === "--no-session") {
+      options.noSession = true;
       continue;
     }
 
@@ -173,6 +199,10 @@ Options:
       --session-id <id>          Provider session id
       --show-thinking            Print streamed thinking deltas
       --once <prompt>            Run one prompt and exit
+  -c, --continue                 Continue the most recent session for cwd
+  -r, --resume                   Pick a previous session for cwd
+      --session <path|id>        Open an exact session file or unique id prefix
+      --no-session               Run without JSONL session persistence
       --no-color                 Disable ANSI color
   -h, --help                     Show this help
 
@@ -183,7 +213,7 @@ Config:
   argon.config.json, .argon/settings.json, or .argon/model.json in cwd or a parent directory.
 
 Interactive commands:
-  /help, /status, /clear, /exit
+  /help, /status, /session, /resume, /tree, /clear, /exit
 `;
 }
 

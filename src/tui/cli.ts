@@ -9,10 +9,13 @@ import {
   type Model
 } from "@earendil-works/pi-ai";
 import { AgentRuntime } from "../runtime.js";
+import { SessionManager } from "../session/manager.js";
 import type { AgentEvent, AgentRuntimeConfig } from "../types.js";
 import { runInteractiveTui } from "./app.js";
 import { TuiEventRenderer } from "./events.js";
 import { parseTuiArgs, renderHelp, type TuiOptions } from "./options.js";
+import { selectWithTui } from "./selectors.js";
+import { createArgonTuiTheme } from "./theme.js";
 
 interface RunState {
   running: boolean;
@@ -32,12 +35,13 @@ async function main(): Promise<void> {
   }
 
   const options = parsed.options;
+  const session = await createSessionManager(options);
   const model = resolveModel(options);
   const renderer = new TuiEventRenderer({
     color: options.color && Boolean(process.stdout.isTTY),
     showThinking: options.showThinking
   });
-  const runtime = createRuntime(options, model);
+  const runtime = createRuntime(options, model, session);
   const state: RunState = {
     running: false,
     abort: () => runtime.abort()
@@ -58,13 +62,40 @@ async function main(): Promise<void> {
   await runInteractiveTui(runtime, options);
 }
 
-function createRuntime(options: TuiOptions, model: Model<Api>): AgentRuntime {
+async function createSessionManager(options: TuiOptions): Promise<SessionManager | undefined> {
+  if (options.noSession) return undefined;
+  if (options.session) return SessionManager.openResolved(options.cwd, options.session);
+  if (options.continueSession) return SessionManager.continueRecent(options.cwd);
+  if (options.resume) {
+    const sessions = SessionManager.list(options.cwd);
+    if (sessions.length === 0) return SessionManager.create(options.cwd);
+    const theme = createArgonTuiTheme(options.color && Boolean(process.stdout.isTTY));
+    const selected = await selectWithTui(
+      "Resume Session",
+      sessions.map((session) => ({
+        value: session.path,
+        label: session.id.slice(0, 8),
+        description: `${session.messageCount} messages  ${session.firstMessage}`
+      })),
+      theme.editor.selectList
+    );
+    if (!selected) {
+      process.stdout.write("No session selected\n");
+      process.exit(0);
+    }
+    return SessionManager.open(selected);
+  }
+  return SessionManager.create(options.cwd);
+}
+
+function createRuntime(options: TuiOptions, model: Model<Api>, session: SessionManager | undefined): AgentRuntime {
   const config: AgentRuntimeConfig = {
     model,
     cwd: options.cwd,
     apiKey: options.apiKey ?? ((provider) => resolveApiKey(provider, options)),
     ...(options.eventLogPath ? { eventLogPath: options.eventLogPath } : {}),
-    ...(options.sessionId ? { sessionId: options.sessionId } : {})
+    ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+    ...(session ? { session } : {})
   };
   return new AgentRuntime(config);
 }

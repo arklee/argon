@@ -1,0 +1,58 @@
+import { ProcessTerminal, SelectList, Text, TUI, type Component, type SelectItem, type SelectListTheme } from "@earendil-works/pi-tui";
+
+export interface SelectionItem {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+export async function selectWithTui(title: string, items: SelectionItem[], theme: SelectListTheme): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const tui = new TUI(new ProcessTerminal());
+    let settled = false;
+    const finish = (value: string | undefined) => {
+      if (settled) return;
+      settled = true;
+      tui.stop();
+      resolve(value);
+    };
+    const picker = new PickerComponent(title, items, theme, finish);
+    tui.addChild(picker);
+    tui.setFocus(picker);
+    tui.start();
+  });
+}
+
+export class PickerComponent implements Component {
+  private readonly list: SelectList;
+
+  constructor(
+    private readonly title: string,
+    items: SelectionItem[],
+    theme: SelectListTheme,
+    private readonly onDone: (value: string | undefined) => void
+  ) {
+    this.list = new SelectList(
+      items.map((item): SelectItem => ({ value: item.value, label: item.label, ...(item.description ? { description: item.description } : {}) })),
+      12,
+      theme,
+      { minPrimaryColumnWidth: 28, maxPrimaryColumnWidth: 48 }
+    );
+    this.list.onSelect = (item) => this.onDone(item.value);
+    this.list.onCancel = () => this.onDone(undefined);
+  }
+
+  render(width: number): string[] {
+    const header = new Text(this.title, 0, 0).render(width);
+    const hint = new Text("enter to select, esc to cancel", 0, 0).render(width);
+    return [...header, ...this.list.render(width), ...hint];
+  }
+
+  handleInput(data: string): void {
+    this.list.handleInput(data);
+  }
+
+  invalidate(): void {
+    this.list.invalidate();
+  }
+}

@@ -11,6 +11,11 @@ export class Transcript {
     return this.entries;
   }
 
+  replace(messages: AgentMessage[]): void {
+    this.entries.length = 0;
+    this.entries.push(...messages);
+  }
+
   snapshot(): AgentMessage[] {
     return structuredClone(this.entries);
   }
