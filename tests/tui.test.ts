@@ -245,6 +245,58 @@ describe("Interactive TUI event controller", () => {
     expect(view.statuses.join("\n")).toContain("max_iterations after 3 iteration(s)");
   });
 
+  it("keeps streamed tool calls between surrounding assistant text", () => {
+    const view = new FakeInteractiveView();
+    const controller = new InteractiveEventController(view, { color: false, showThinking: false });
+    const toolCall = fakeToolCall("read", { path: "note.txt" });
+
+    controller.render({
+      type: "message_delta",
+      role: "assistant",
+      kind: "text",
+      contentIndex: 0,
+      delta: "before ",
+      partial: fakeAssistant()
+    });
+    controller.render({ type: "tool_call_end", contentIndex: 1, toolCall, partial: fakeAssistant() });
+    controller.render({
+      type: "message_delta",
+      role: "assistant",
+      kind: "text",
+      contentIndex: 2,
+      delta: "after",
+      partial: fakeAssistant()
+    });
+
+    expect(view.assistants.map((message) => message.text)).toEqual(["before ", "after"]);
+    expect(view.components).toEqual(["assistant:0", "status:  tool read {\"path\":\"note.txt\"}", "assistant:1"]);
+  });
+
+  it("starts a fresh assistant component after message end", () => {
+    const view = new FakeInteractiveView();
+    const controller = new InteractiveEventController(view, { color: false, showThinking: false });
+
+    controller.render({
+      type: "message_delta",
+      role: "assistant",
+      kind: "text",
+      contentIndex: 0,
+      delta: "first",
+      partial: fakeAssistant()
+    });
+    controller.render({ type: "message_end", message: fakeAssistant() });
+    controller.render({
+      type: "message_delta",
+      role: "assistant",
+      kind: "text",
+      contentIndex: 0,
+      delta: "second",
+      partial: fakeAssistant()
+    });
+
+    expect(view.assistants.map((message) => message.text)).toEqual(["first", "second"]);
+  });
+
   it("renders error and aborted statuses", () => {
     const view = new FakeInteractiveView();
     const controller = new InteractiveEventController(view, { color: false, showThinking: false });
@@ -279,32 +331,39 @@ class FakeInteractiveView implements InteractiveTuiView {
   assistants: FakeMutableMessage[] = [];
   thinking: FakeMutableMessage[] = [];
   statuses: string[] = [];
+  components: string[] = [];
   runningStates: boolean[] = [];
   renderRequests = 0;
   clears = 0;
 
   addUserMessage(text: string): void {
     this.users.push(text);
+    this.components.push(`user:${text}`);
   }
 
   addAssistantMessage(): MutableTuiMessage {
     const message = new FakeMutableMessage();
     this.assistants.push(message);
+    this.components.push(`assistant:${this.assistants.length - 1}`);
     return message;
   }
 
   addThinkingMessage(): MutableTuiMessage {
     const message = new FakeMutableMessage();
     this.thinking.push(message);
+    this.components.push(`thinking:${this.thinking.length - 1}`);
     return message;
   }
 
   addStatusMessage(text: string): void {
-    this.statuses.push(stripAnsi(text));
+    const status = stripAnsi(text);
+    this.statuses.push(status);
+    this.components.push(`status:${status}`);
   }
 
   clearMessages(): void {
     this.clears++;
+    this.components.length = 0;
   }
 
   setRunning(running: boolean): void {

@@ -26,6 +26,20 @@ describe("PromptManager", () => {
     expect(prompt).not.toContain("- bash:");
   });
 
+  it("includes Codex-lite default behavior guidance", async () => {
+    const cwd = await tempDir();
+    const prompt = new PromptManager().buildSystemPrompt({
+      cwd,
+      tools: []
+    });
+
+    expect(prompt).toContain("precise, safe, and helpful coding agent");
+    expect(prompt).toContain("Preserve user changes and unrelated local work");
+    expect(prompt).toContain("Keep changes scoped to the request");
+    expect(prompt).toContain("do not claim a change was verified unless a check actually ran");
+    expect(prompt).toContain("verification status");
+  });
+
   it("orders AGENTS.md files from project root to cwd", async () => {
     const root = await tempDir();
     await mkdir(join(root, ".git"));
@@ -41,5 +55,21 @@ describe("PromptManager", () => {
 
     expect(prompt.indexOf("root instructions")).toBeLessThan(prompt.indexOf("package instructions"));
     expect(prompt.indexOf("package instructions")).toBeLessThan(prompt.indexOf("app instructions"));
+  });
+
+  it("describes AGENTS.md precedence near project instructions", async () => {
+    const root = await tempDir();
+    await mkdir(join(root, ".git"));
+    await writeFile(join(root, "AGENTS.md"), "root instructions", "utf8");
+
+    const prompt = new PromptManager().buildSystemPrompt({
+      cwd: root,
+      tools: []
+    });
+
+    expect(prompt).toContain("AGENTS.md files included below are ordered from repository root to the active cwd");
+    expect(prompt).toContain("More specific nested AGENTS.md instructions take precedence");
+    expect(prompt).toContain("Direct system, developer, and user instructions outrank project instructions");
+    expect(prompt.indexOf("AGENTS.md files included below")).toBeLessThan(prompt.indexOf("root instructions"));
   });
 });

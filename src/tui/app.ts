@@ -82,23 +82,29 @@ export class InteractiveEventController {
           this.thinkingMessage().append(event.delta);
         }
         break;
+      case "message_end":
+        this.closeStreamingBlocks();
+        break;
+      case "tool_call_start":
+        this.closeStreamingBlocks();
+        break;
       case "tool_call_end":
+        this.closeStreamingBlocks();
         this.view.addStatusMessage(renderToolCall(event.toolCall.name, event.toolCall.arguments, this.options.color));
         break;
       case "tool_result":
+        this.closeStreamingBlocks();
         this.view.addStatusMessage(renderToolResult(event.result, this.options.color));
         break;
       case "turn_end":
-        this.currentAssistant = undefined;
-        this.currentThinking = undefined;
+        this.closeStreamingBlocks();
         this.view.setRunning(false);
         if (event.reason !== "stop") {
           this.view.addStatusMessage(`  ${event.reason} after ${event.iterations} iteration(s)`);
         }
         break;
       case "error":
-        this.currentAssistant = undefined;
-        this.currentThinking = undefined;
+        this.closeStreamingBlocks();
         this.view.addStatusMessage(`error ${event.error.message}`);
         break;
       default:
@@ -120,6 +126,11 @@ export class InteractiveEventController {
       this.currentThinking = this.view.addThinkingMessage();
     }
     return this.currentThinking;
+  }
+
+  private closeStreamingBlocks(): void {
+    this.currentAssistant = undefined;
+    this.currentThinking = undefined;
   }
 }
 
