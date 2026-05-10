@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { Type } from "@mariozechner/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 import type { ToolRuntime } from "../types.js";
 import { createToolResult, requireString, resolveWorkspacePath } from "./utils.js";
 

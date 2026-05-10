@@ -7,7 +7,7 @@ import {
   type Api,
   type KnownProvider,
   type Model
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import { AgentRuntime } from "../runtime.js";
 import type { AgentEvent, AgentRuntimeConfig } from "../types.js";
 import { runInteractiveTui } from "./app.js";

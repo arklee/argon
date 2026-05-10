@@ -4,11 +4,11 @@
 
 These instructions apply to the entire Argon repository. More specific `AGENTS.md` files in child directories override this file for their subtree.
 
-Argon is a Node.js + TypeScript coding agent. It reuses provider support from `@mariozechner/pi-ai`, implements its own Codex-like agent loop, and may expose both a TUI and a Tauri-based GUI. Keep the core agent runtime independent from any UI surface.
+Argon is a Node.js + TypeScript coding agent. It reuses provider support from the npm package `@earendil-works/pi-ai`, implements its own Codex-like agent loop, and may expose both a TUI and a Tauri-based GUI. Keep the core agent runtime independent from any UI surface.
 
 ## Architecture Principles
 
-- Keep `@mariozechner/pi-ai` as the provider boundary. Use its `Context`, `Message`, `Tool`, `AssistantMessageEvent`, and `streamSimple()` abstractions instead of adding provider-specific SDK paths.
+- Keep `@earendil-works/pi-ai` as the provider boundary. Use its `Context`, `Message`, `Tool`, `AssistantMessageEvent`, and `streamSimple()` abstractions instead of adding provider-specific SDK paths.
 - Treat the provider layer as a thin adapter for model invocation, API key resolution, abort handling, reasoning/session options, and event normalization. Do not build a separate Responses-vs-Chat adapter layer unless explicitly requested.
 - Keep the agent loop as a deterministic turn state machine: immutable `TurnContext`, append-only transcript updates, streamed `AgentEvent`s, collected tool calls, tool result messages, and explicit continuation reasons.
 - Keep prompt management layered internally and flattened externally into a single `systemPrompt` for pi-ai. Project instructions should be discovered from `AGENTS.md` files in root-to-cwd order.

@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { ToolCall } from "@mariozechner/pi-ai";
+import type { ToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
   createBashTool,

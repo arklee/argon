@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
+import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
 
 export const DEFAULT_CONFIG_FILES = ["argon.config.json", ".argon/settings.json", ".argon/model.json"] as const;
 

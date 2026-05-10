@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
+import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { loadTuiConfig, type TuiConfig } from "./config.js";
 
 const DEFAULT_PROVIDER = "openai";

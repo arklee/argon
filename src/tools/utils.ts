@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import type { ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 
 export const DEFAULT_MAX_BYTES = 64 * 1024;
 

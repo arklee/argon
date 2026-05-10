@@ -1,4 +1,4 @@
-import { streamSimple, type Context, type Model, type SimpleStreamOptions } from "@mariozechner/pi-ai";
+import { streamSimple, type Context, type Model, type SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { ApiKeyResolver, StreamProvider } from "../types.js";
 
 export async function resolveApiKey(resolver: ApiKeyResolver | undefined, provider: string): Promise<string | undefined> {

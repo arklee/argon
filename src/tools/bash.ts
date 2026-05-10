@@ -1,4 +1,4 @@
-import { Type } from "@mariozechner/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 import type { ToolRuntime } from "../types.js";
 import { formatProcessResult, runProcess } from "./process.js";
 import { createToolResult, optionalNumber, requireString } from "./utils.js";

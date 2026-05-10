@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { Type } from "@mariozechner/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 import type { ToolRuntime } from "../types.js";
 import { createToolResult, optionalNumber, requireString, resolveWorkspacePath, truncateText } from "./utils.js";
 

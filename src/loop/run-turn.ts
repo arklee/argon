@@ -1,4 +1,4 @@
-import type { AssistantMessage, AssistantMessageEvent, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { PromptManager } from "../prompt/manager.js";
 import { streamWithProvider } from "../provider/index.js";
 import type {

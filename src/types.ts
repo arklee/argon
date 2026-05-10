@@ -9,7 +9,7 @@ import type {
   ToolCall,
   ToolResultMessage,
   UserMessage
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 
 export type AgentMessage = Message;
 

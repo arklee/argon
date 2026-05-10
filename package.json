@@ -21,8 +21,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "file:../pi-mono/packages/ai",
-    "@mariozechner/pi-tui": "file:../pi-mono/packages/tui"
+    "@earendil-works/pi-ai": "^0.74.0",
+    "@earendil-works/pi-tui": "^0.74.0"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

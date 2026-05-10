@@ -1,4 +1,4 @@
-import type { ToolResultMessage } from "@mariozechner/pi-ai";
+import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AgentEvent } from "../types.js";
 
 export interface EventRendererOptions {

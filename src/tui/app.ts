@@ -9,7 +9,7 @@ import {
   matchesKey,
   type Component,
   type SlashCommand
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import { AgentRuntime } from "../runtime.js";
 import type { AgentEvent, RunOptions } from "../types.js";
 import { compactText, renderToolCall, renderToolResult } from "./events.js";

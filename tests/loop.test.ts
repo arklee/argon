@@ -7,7 +7,7 @@ import {
   fauxToolCall,
   registerFauxProvider,
   type FauxProviderRegistration
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import { AgentRuntime, createReadTool, type AgentEvent } from "../src/index.js";
 
 async function collect(iterable: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
