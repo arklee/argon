@@ -18,18 +18,22 @@ import type { TurnContext } from "../src/types.js";
 describe("TUI options", () => {
   it("parses provider/model shortcuts and run controls", () => {
     const parsed = parseTuiArgs(
-      ["--model", "anthropic/claude-sonnet-4-5", "--max-iterations", "3", "--reasoning", "high", "--once", "hi"],
+      ["--model", "anthropic/claude-sonnet-4-5", "--reasoning", "high", "--once", "hi"],
       { NO_COLOR: "1" }
     );
 
     expect(parsed.options).toMatchObject({
       provider: "anthropic",
       modelId: "claude-sonnet-4-5",
-      maxIterations: 3,
       reasoning: "high",
       once: "hi",
       color: false
     });
+  });
+
+  it("does not expose max iterations as a TUI option", () => {
+    const parsed = parseTuiArgs(["--max-iterations", "3"], {});
+    expect(parsed.error).toBe("Unknown argument: --max-iterations");
   });
 
   it("reports missing flag values", () => {
@@ -55,7 +59,6 @@ describe("TUI options", () => {
         model: "claude-sonnet-4-5",
         baseUrl: "https://example.test/v1",
         reasoning: "medium",
-        maxIterations: 5,
         apiKey: "config-key",
         apiKeyEnv: "ANTHROPIC_API_KEY",
         eventLogPath: ".argon/events.jsonl"
@@ -70,7 +73,6 @@ describe("TUI options", () => {
       modelId: "gpt-5.2-codex",
       baseUrl: "https://example.test/v1",
       reasoning: "medium",
-      maxIterations: 5,
       apiKey: "config-key",
       apiKeyEnv: "ANTHROPIC_API_KEY",
       eventLogPath: join(dir, ".argon/events.jsonl")

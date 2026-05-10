@@ -70,9 +70,13 @@ export interface ToolExecutionContext {
   messages: readonly AgentMessage[];
 }
 
+export type ToolExecutionResult = ToolResultMessage & {
+  terminate?: boolean | undefined;
+};
+
 export interface ToolRuntime {
   definition: Tool<any>;
-  execute(call: ToolCall, ctx: ToolExecutionContext): Promise<ToolResultMessage>;
+  execute(call: ToolCall, ctx: ToolExecutionContext): Promise<ToolExecutionResult>;
   guideline?: string;
 }
 

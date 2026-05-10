@@ -4,14 +4,12 @@ import { loadTuiConfig, type TuiConfig } from "./config.js";
 
 const DEFAULT_PROVIDER = "openai";
 const DEFAULT_MODEL = "gpt-5.2-codex";
-const DEFAULT_MAX_ITERATIONS = 12;
 
 export interface TuiOptions {
   cwd: string;
   provider: string;
   modelId: string;
   baseUrl?: string;
-  maxIterations: number;
   showThinking: boolean;
   color: boolean;
   configPath?: string;
@@ -37,7 +35,6 @@ export function parseTuiArgs(args: string[], env: NodeJS.ProcessEnv = process.en
     cwd: prelude.cwd,
     provider: DEFAULT_PROVIDER,
     modelId: DEFAULT_MODEL,
-    maxIterations: DEFAULT_MAX_ITERATIONS,
     showThinking: false,
     color: env.NO_COLOR === undefined
   };
@@ -154,17 +151,6 @@ export function parseTuiArgs(args: string[], env: NodeJS.ProcessEnv = process.en
       continue;
     }
 
-    if (arg === "--max-iterations") {
-      const value = readValue(args, ++index, arg);
-      if ("error" in value) return value;
-      const parsed = Number.parseInt(value.value, 10);
-      if (!Number.isFinite(parsed) || parsed < 1) {
-        return { error: "--max-iterations must be a positive integer" };
-      }
-      options.maxIterations = parsed;
-      continue;
-    }
-
     return { error: `Unknown argument: ${arg}` };
   }
 
@@ -183,7 +169,6 @@ Options:
       --api-key <key>            API key override; config apiKey and env lookup are fallback
       --api-key-env <name>       Read API key from this environment variable
       --reasoning <level>        Reasoning level: low, medium, high, xhigh
-      --max-iterations <n>       Max agent loop iterations per prompt
       --event-log <path>         JSONL runtime event log path
       --session-id <id>          Provider session id
       --show-thinking            Print streamed thinking deltas
@@ -192,7 +177,7 @@ Options:
   -h, --help                     Show this help
 
 Environment:
-  ARGON_PROVIDER, ARGON_MODEL, ARGON_BASE_URL, ARGON_CWD, ARGON_MAX_ITERATIONS, ARGON_SHOW_THINKING
+  ARGON_PROVIDER, ARGON_MODEL, ARGON_BASE_URL, ARGON_CWD, ARGON_SHOW_THINKING
 
 Config:
   argon.config.json, .argon/settings.json, or .argon/model.json in cwd or a parent directory.
@@ -208,7 +193,6 @@ function applyConfig(options: TuiOptions, config: TuiConfig): void {
   if (config.model !== undefined) applyModelValue(options, config.model, config.provider !== undefined);
   if (config.modelId !== undefined) options.modelId = config.modelId;
   if (config.baseUrl !== undefined) options.baseUrl = config.baseUrl;
-  if (config.maxIterations !== undefined) options.maxIterations = config.maxIterations;
   if (config.showThinking !== undefined) options.showThinking = config.showThinking;
   if (config.color !== undefined) options.color = config.color;
   if (config.apiKey !== undefined) options.apiKey = config.apiKey;
@@ -223,7 +207,6 @@ function applyEnv(options: TuiOptions, env: NodeJS.ProcessEnv): void {
   if (env.ARGON_PROVIDER) options.provider = env.ARGON_PROVIDER;
   if (env.ARGON_MODEL) options.modelId = env.ARGON_MODEL;
   if (env.ARGON_BASE_URL) options.baseUrl = env.ARGON_BASE_URL;
-  if (env.ARGON_MAX_ITERATIONS) options.maxIterations = parsePositiveInt(env.ARGON_MAX_ITERATIONS, options.maxIterations);
   if (env.ARGON_SHOW_THINKING === "1" || env.ARGON_SHOW_THINKING === "true") options.showThinking = true;
 }
 
@@ -265,12 +248,6 @@ function readValue(args: string[], index: number, flag: string): { value: string
     return { error: `Missing value for ${flag}` };
   }
   return { value };
-}
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  if (!value) return fallback;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function isReasoningLevel(value: string): value is NonNullable<SimpleStreamOptions["reasoning"]> {

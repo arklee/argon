@@ -10,7 +10,6 @@ export interface TuiConfig {
   modelId?: string;
   baseUrl?: string;
   cwd?: string;
-  maxIterations?: number;
   showThinking?: boolean;
   color?: boolean;
   apiKey?: string;
@@ -81,14 +80,6 @@ function normalizeConfig(value: unknown, baseDir: string): TuiConfig {
   const cwd = optionalString(value, "cwd");
   if (cwd !== undefined) config.cwd = resolvePath(baseDir, cwd);
 
-  const maxIterations = optionalNumber(value, "maxIterations");
-  if (maxIterations !== undefined) {
-    if (!Number.isInteger(maxIterations) || maxIterations < 1) {
-      throw new Error("maxIterations must be a positive integer");
-    }
-    config.maxIterations = maxIterations;
-  }
-
   const showThinking = optionalBoolean(value, "showThinking");
   if (showThinking !== undefined) config.showThinking = showThinking;
 
@@ -123,15 +114,6 @@ function optionalString(value: Record<string, unknown>, key: string): string | u
   if (candidate === undefined) return undefined;
   if (typeof candidate !== "string" || candidate.length === 0) {
     throw new Error(`${key} must be a non-empty string`);
-  }
-  return candidate;
-}
-
-function optionalNumber(value: Record<string, unknown>, key: string): number | undefined {
-  const candidate = value[key];
-  if (candidate === undefined) return undefined;
-  if (typeof candidate !== "number") {
-    throw new Error(`${key} must be a number`);
   }
   return candidate;
 }

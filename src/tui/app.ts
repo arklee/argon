@@ -165,7 +165,6 @@ export function resolveSlashCommand(input: string, context: SlashCommandContext)
 
 export function createInteractiveRunOptions(options: TuiOptions): RunOptions {
   return {
-    maxIterations: options.maxIterations,
     ...(options.reasoning ? { reasoning: options.reasoning } : {})
   };
 }

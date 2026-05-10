@@ -6,9 +6,10 @@ import {
   fauxAssistantMessage,
   fauxToolCall,
   registerFauxProvider,
+  Type,
   type FauxProviderRegistration
 } from "@earendil-works/pi-ai";
-import { AgentRuntime, createReadTool, type AgentEvent } from "../src/index.js";
+import { AgentRuntime, createReadTool, type AgentEvent, type ToolRuntime } from "../src/index.js";
 
 async function collect(iterable: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
   const events: AgentEvent[] = [];
@@ -117,6 +118,63 @@ describe("AgentRuntime loop", () => {
 
     const events = await collect(runtime.run("loop", { maxIterations: 1 }));
     expect(events.at(-1)).toMatchObject({ type: "turn_end", reason: "max_iterations", iterations: 1 });
+  });
+
+  it("does not apply a default maxIterations limit", async () => {
+    const cwd = await tempDir();
+    await writeFile(join(cwd, "note.txt"), "loop", "utf8");
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([
+      ...Array.from({ length: 13 }, (_, index) =>
+        fauxAssistantMessage(fauxToolCall("read", { path: "note.txt" }, { id: `call-read-${index}` }))
+      ),
+      fauxAssistantMessage("done")
+    ]);
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd,
+      tools: [createReadTool()],
+      apiKey: "test"
+    });
+
+    const events = await collect(runtime.run("loop"));
+    expect(events.at(-1)).toMatchObject({ type: "turn_end", reason: "stop", iterations: 14 });
+  });
+
+  it("stops after terminating tool results", async () => {
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([fauxAssistantMessage(fauxToolCall("finish", {}, { id: "call-finish" }))]);
+    const terminatingTool: ToolRuntime = {
+      definition: {
+        name: "finish",
+        description: "Return a final tool result.",
+        parameters: Type.Object({})
+      },
+      async execute(call) {
+        return {
+          role: "toolResult",
+          toolCallId: call.id,
+          toolName: call.name,
+          content: [{ type: "text", text: "finished" }],
+          isError: false,
+          timestamp: Date.now(),
+          terminate: true
+        };
+      }
+    };
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd: await tempDir(),
+      tools: [terminatingTool],
+      apiKey: "test"
+    });
+
+    const events = await collect(runtime.run("finish"));
+    expect(events.at(-1)).toMatchObject({ type: "turn_end", reason: "stop", iterations: 1 });
+    expect(runtime.messages().map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+    expect(runtime.messages().at(-1)).not.toHaveProperty("terminate");
   });
 
   it("marks an already-aborted run as aborted", async () => {

@@ -7,12 +7,11 @@ import type {
   ContinueReason,
   LoopState,
   RunTurnParams,
+  ToolExecutionResult,
   TurnContext,
   TurnEndReason,
   UserInput
 } from "../types.js";
-
-const DEFAULT_MAX_ITERATIONS = 12;
 
 export interface RunTurnResult {
   reason: TurnEndReason;
@@ -37,7 +36,7 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
   });
 
   let iterations = 0;
-  const maxIterations = params.options?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  const maxIterations = params.options?.maxIterations;
   const followUps = [...(params.options?.followUps ?? [])];
 
   yield { type: "turn_start", context: turn };
@@ -46,7 +45,12 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
   yield { type: "message_start", message: firstUserMessage };
   yield { type: "message_end", message: firstUserMessage };
 
-  while (iterations < maxIterations) {
+  while (true) {
+    if (maxIterations !== undefined && iterations >= maxIterations) {
+      yield { type: "turn_end", context: turn, reason: "max_iterations", iterations };
+      return { reason: "max_iterations", iterations };
+    }
+
     iterations++;
 
     const assistant = yield* streamAssistantMessage(params, turn);
@@ -64,11 +68,19 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
     const toolCalls = assistant.content.filter((block): block is ToolCall => block.type === "toolCall");
     if (toolCalls.length > 0) {
       const toolResults: ToolResultMessage[] = [];
+      const terminateResults: boolean[] = [];
       for (const toolCall of toolCalls) {
-        const result = await executeToolCall(toolCall, params, turn);
+        const outcome = await executeToolCall(toolCall, params, turn);
+        const { result, terminate } = normalizeToolExecutionResult(outcome);
         params.messages.push(result);
         toolResults.push(result);
+        terminateResults.push(terminate);
         yield { type: "tool_result", toolCall, result };
+      }
+
+      if (terminateResults.every(Boolean)) {
+        yield { type: "turn_end", context: turn, reason: "stop", iterations };
+        return { reason: "stop", iterations };
       }
 
       const shouldContinue = await shouldContinueAfterTools(params, {
@@ -97,9 +109,6 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
     yield { type: "turn_end", context: turn, reason: "stop", iterations };
     return { reason: "stop", iterations };
   }
-
-  yield { type: "turn_end", context: turn, reason: "max_iterations", iterations };
-  return { reason: "max_iterations", iterations };
 }
 
 async function* streamAssistantMessage(
@@ -218,7 +227,7 @@ async function executeToolCall(
   toolCall: ToolCall,
   params: RunTurnParams,
   turn: TurnContext
-): Promise<ToolResultMessage> {
+): Promise<ToolExecutionResult> {
   const tool = params.tools.find((candidate) => candidate.definition.name === toolCall.name);
   if (!tool) {
     return createTextToolResult(toolCall, `Tool not found: ${toolCall.name}`, true);
@@ -234,6 +243,11 @@ async function executeToolCall(
   } catch (error) {
     return createTextToolResult(toolCall, error instanceof Error ? error.message : String(error), true);
   }
+}
+
+function normalizeToolExecutionResult(outcome: ToolExecutionResult): { result: ToolResultMessage; terminate: boolean } {
+  const { terminate, ...result } = outcome;
+  return { result, terminate: terminate === true };
 }
 
 async function shouldContinueAfterTools(params: RunTurnParams, state: LoopState): Promise<boolean> {

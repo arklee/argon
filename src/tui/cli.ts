@@ -86,7 +86,6 @@ async function runPrompt(
 
   try {
     const runOptions = {
-      maxIterations: options.maxIterations,
       ...(options.reasoning ? { reasoning: options.reasoning } : {})
     };
 

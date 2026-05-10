@@ -57,7 +57,7 @@ Argon is a Node.js + TypeScript coding agent. It reuses provider support from th
 - One user request creates one immutable turn context.
 - Stream assistant deltas as soon as pi-ai emits them; do not wait for final completion to expose ordinary text.
 - For V1-style loop behavior, collect tool calls from the final assistant message, execute them after `message_end`, append tool results, and continue according to the configured strategy.
-- Stop cleanly when the assistant has no tool calls, when the provider reports error or abort, or when `maxIterations` is reached.
+- Stop cleanly when the assistant has no tool calls, when tool execution requests termination, when the provider reports error or abort, or when an explicit `maxIterations` limit is reached.
 - Emit clear error events and preserve enough context for UI surfaces to render failures without inspecting internal exceptions.
 
 ## Tool Rules
@@ -68,7 +68,7 @@ Argon is a Node.js + TypeScript coding agent. It reuses provider support from th
 - `edit` performs exact string replacement and fails if the match is missing or ambiguous.
 - `ls` returns bounded directory listings.
 - `grep` should use `rg` when available and report a clear error if the required search backend is missing.
-- Tool results should be plain text and compatible with pi-ai `ToolResultMessage` expectations.
+- Tool results should be plain text and compatible with pi-ai `ToolResultMessage` expectations; optional runtime termination metadata must not be sent to the model transcript.
 
 ## UI Rules
 
