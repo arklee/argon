@@ -1,0 +1,145 @@
+import type {
+  AssistantMessage,
+  AssistantMessageEventStream,
+  Context,
+  Message,
+  Model,
+  SimpleStreamOptions,
+  Tool,
+  ToolCall,
+  ToolResultMessage,
+  UserMessage
+} from "@mariozechner/pi-ai";
+
+export type AgentMessage = Message;
+
+export type UserInput =
+  | string
+  | {
+      content: UserMessage["content"];
+    };
+
+export type ContinueReason = "tool_results" | "follow_up" | "strategy";
+
+export interface TurnContext {
+  readonly turnId: string;
+  readonly cwd: string;
+  readonly model: Model<any>;
+  readonly systemPrompt: string;
+  readonly startedAt: number;
+  readonly availableTools: readonly string[];
+  readonly messageCount: number;
+}
+
+export type TurnEndReason = "stop" | "max_iterations" | "error" | "aborted";
+
+export type AgentEvent =
+  | { type: "turn_start"; context: TurnContext }
+  | { type: "message_start"; message: AgentMessage }
+  | {
+      type: "message_delta";
+      role: "assistant";
+      kind: "text" | "thinking" | "tool_call";
+      contentIndex: number;
+      delta: string;
+      partial: AssistantMessage;
+    }
+  | { type: "message_end"; message: AgentMessage }
+  | { type: "tool_call_start"; contentIndex: number; partial: AssistantMessage }
+  | {
+      type: "tool_call_delta";
+      contentIndex: number;
+      delta: string;
+      partial: AssistantMessage;
+    }
+  | { type: "tool_call_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
+  | { type: "tool_result"; toolCall: ToolCall; result: ToolResultMessage }
+  | {
+      type: "turn_end";
+      context: TurnContext;
+      reason: TurnEndReason;
+      iterations: number;
+      continueReason?: ContinueReason;
+    }
+  | { type: "error"; error: Error; recoverable: boolean };
+
+export interface ToolExecutionContext {
+  cwd: string;
+  signal?: AbortSignal | undefined;
+  turn: TurnContext;
+  messages: readonly AgentMessage[];
+}
+
+export interface ToolRuntime {
+  definition: Tool<any>;
+  execute(call: ToolCall, ctx: ToolExecutionContext): Promise<ToolResultMessage>;
+  guideline?: string;
+}
+
+export type ApiKeyResolver = string | ((provider: string) => string | Promise<string | undefined> | undefined);
+
+export type StreamProvider = (
+  model: Model<any>,
+  context: Context,
+  options?: SimpleStreamOptions
+) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
+
+export interface PromptConfig {
+  baseInstructions?: string | undefined;
+  behaviorRules?: string[] | undefined;
+  projectInstructions?: string | undefined;
+  includeProjectInstructions?: boolean | undefined;
+  maxProjectInstructionsBytes?: number | undefined;
+  now?: Date | undefined;
+}
+
+export interface PromptBuildInput {
+  cwd: string;
+  tools: readonly ToolRuntime[];
+  config?: PromptConfig | undefined;
+}
+
+export interface LoopState {
+  turn: TurnContext;
+  messages: readonly AgentMessage[];
+  lastAssistant?: AssistantMessage;
+  toolResults: readonly ToolResultMessage[];
+  iterations: number;
+}
+
+export interface LoopStrategy {
+  shouldContinue?(state: LoopState): boolean | Promise<boolean>;
+}
+
+export interface RunOptions {
+  maxIterations?: number | undefined;
+  signal?: AbortSignal | undefined;
+  reasoning?: SimpleStreamOptions["reasoning"] | undefined;
+  sessionId?: string | undefined;
+  strategy?: LoopStrategy | undefined;
+  followUps?: UserInput[] | undefined;
+}
+
+export interface AgentRuntimeConfig {
+  model: Model<any>;
+  cwd: string;
+  apiKey?: ApiKeyResolver | undefined;
+  tools?: ToolRuntime[] | undefined;
+  prompt?: PromptConfig | undefined;
+  sessionId?: string | undefined;
+  stream?: StreamProvider | undefined;
+  eventLogPath?: string | undefined;
+}
+
+export interface RunTurnParams {
+  input: UserInput;
+  messages: AgentMessage[];
+  model: Model<any>;
+  cwd: string;
+  promptConfig?: PromptConfig | undefined;
+  tools: ToolRuntime[];
+  apiKey?: ApiKeyResolver | undefined;
+  sessionId?: string | undefined;
+  stream?: StreamProvider | undefined;
+  options?: RunOptions | undefined;
+}
