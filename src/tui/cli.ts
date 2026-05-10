@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 
-import { createInterface } from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
 import {
   getEnvApiKey,
   getModels,
@@ -12,6 +10,7 @@ import {
 } from "@mariozechner/pi-ai";
 import { AgentRuntime } from "../runtime.js";
 import type { AgentEvent, AgentRuntimeConfig } from "../types.js";
+import { runInteractiveTui } from "./app.js";
 import { TuiEventRenderer } from "./events.js";
 import { parseTuiArgs, renderHelp, type TuiOptions } from "./options.js";
 
@@ -56,7 +55,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  await runInteractive(runtime, renderer, options, state);
+  await runInteractiveTui(runtime, options);
 }
 
 function createRuntime(options: TuiOptions, model: Model<Api>): AgentRuntime {
@@ -73,47 +72,6 @@ function createRuntime(options: TuiOptions, model: Model<Api>): AgentRuntime {
 function resolveApiKey(provider: string, options: TuiOptions): string | undefined {
   if (options.apiKeyEnv) return process.env[options.apiKeyEnv];
   return getEnvApiKey(provider);
-}
-
-async function runInteractive(
-  runtime: AgentRuntime,
-  renderer: TuiEventRenderer,
-  options: TuiOptions,
-  state: RunState
-): Promise<void> {
-  const rl = createInterface({ input, output });
-  let closing = false;
-
-  rl.on("SIGINT", () => {
-    if (state.running) {
-      state.abort();
-      renderer.status("Interrupted current run.");
-      return;
-    }
-
-    closing = true;
-    rl.close();
-  });
-
-  const configLabel = options.configPath ? ` config=${options.configPath}` : "";
-  renderer.status(`Argon TUI. ${options.provider}/${options.modelId} in ${options.cwd}${configLabel}`);
-  renderer.status("Type /help for commands, /exit to quit. End a line with \\ to continue input.");
-
-  while (!closing) {
-    const text = await readPrompt(rl);
-    if (text === undefined) break;
-
-    const trimmed = text.trim();
-    if (!trimmed) continue;
-    if (await handleCommand(trimmed, runtime, renderer, options)) {
-      if (trimmed === "/exit" || trimmed === "/quit") break;
-      continue;
-    }
-
-    await runPrompt(runtime, renderer, text, options, state);
-  }
-
-  rl.close();
 }
 
 async function runPrompt(
@@ -141,59 +99,6 @@ async function runPrompt(
   }
 
   return exitCode;
-}
-
-async function readPrompt(rl: ReturnType<typeof createInterface>): Promise<string | undefined> {
-  const lines: string[] = [];
-  let label = "> ";
-
-  while (true) {
-    let line: string;
-    try {
-      line = await rl.question(label);
-    } catch {
-      return undefined;
-    }
-
-    if (line.endsWith("\\")) {
-      lines.push(line.slice(0, -1));
-      label = ". ";
-      continue;
-    }
-
-    lines.push(line);
-    return lines.join("\n");
-  }
-}
-
-async function handleCommand(
-  command: string,
-  runtime: AgentRuntime,
-  renderer: TuiEventRenderer,
-  options: TuiOptions
-): Promise<boolean> {
-  switch (command) {
-    case "/help":
-      renderer.status("Commands: /help, /status, /clear, /exit");
-      return true;
-    case "/status":
-      renderer.status(
-        `model=${options.provider}/${options.modelId} cwd=${options.cwd} messages=${runtime.messages().length}${options.configPath ? ` config=${options.configPath}` : ""}`
-      );
-      return true;
-    case "/clear":
-      process.stdout.write("\u001b[2J\u001b[H");
-      return true;
-    case "/exit":
-    case "/quit":
-      return true;
-    default:
-      if (command.startsWith("/")) {
-        renderer.status(`Unknown command: ${command}`);
-        return true;
-      }
-      return false;
-  }
 }
 
 function resolveModel(options: TuiOptions): Model<Api> {

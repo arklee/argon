@@ -1,10 +1,19 @@
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
+import {
+  InteractiveEventController,
+  TUI_SLASH_COMMANDS,
+  rememberSubmittedPrompt,
+  resolveSlashCommand,
+  type InteractiveTuiView,
+  type MutableTuiMessage
+} from "../src/tui/app.js";
 import { renderToolResult, stripAnsi } from "../src/tui/events.js";
 import { parseTuiArgs } from "../src/tui/options.js";
+import type { TurnContext } from "../src/types.js";
 
 describe("TUI options", () => {
   it("parses provider/model shortcuts and run controls", () => {
@@ -133,3 +142,228 @@ describe("TUI event rendering", () => {
     expect(stripAnsi(renderToolResult(result, true))).toContain("done read hello world");
   });
 });
+
+describe("Interactive TUI commands", () => {
+  const context = {
+    provider: "openai",
+    modelId: "gpt-5.2-codex",
+    cwd: "/tmp/project",
+    messageCount: 4,
+    configPath: "/tmp/project/argon.config.json"
+  };
+
+  it("resolves built-in slash commands", () => {
+    expect(resolveSlashCommand("/help", context)).toMatchObject({
+      handled: true,
+      action: "message",
+      message: expect.stringContaining("/status")
+    });
+    expect(resolveSlashCommand("/status", context)).toMatchObject({
+      handled: true,
+      action: "message",
+      message: expect.stringContaining("messages=4")
+    });
+    expect(resolveSlashCommand("/clear", context)).toMatchObject({ handled: true, action: "clear" });
+    expect(resolveSlashCommand("/exit", context)).toMatchObject({ handled: true, action: "exit" });
+    expect(resolveSlashCommand("hello", context)).toEqual({ handled: false });
+  });
+
+  it("reports unknown slash commands and exposes completion commands", () => {
+    expect(resolveSlashCommand("/bogus", context)).toMatchObject({
+      handled: true,
+      action: "message",
+      message: "Unknown command: /bogus"
+    });
+    expect(TUI_SLASH_COMMANDS.map((command) => command.name)).toEqual(["help", "status", "clear", "exit", "quit"]);
+  });
+});
+
+describe("Interactive TUI event controller", () => {
+  it("streams assistant text and toggles running state", () => {
+    const view = new FakeInteractiveView();
+    const controller = new InteractiveEventController(view, { color: false, showThinking: false });
+
+    controller.beginRun("hello");
+    controller.render({
+      type: "message_delta",
+      role: "assistant",
+      kind: "text",
+      contentIndex: 0,
+      delta: "hi",
+      partial: fakeAssistant()
+    });
+    controller.render({
+      type: "message_delta",
+      role: "assistant",
+      kind: "text",
+      contentIndex: 0,
+      delta: " there",
+      partial: fakeAssistant()
+    });
+    controller.render({ type: "turn_end", context: fakeTurnContext(), reason: "stop", iterations: 1 });
+
+    expect(view.users).toEqual(["hello"]);
+    expect(view.assistants.map((message) => message.text)).toEqual(["hi there"]);
+    expect(view.runningStates).toEqual([true, false]);
+  });
+
+  it("hides thinking by default and renders it when enabled", () => {
+    const hidden = new FakeInteractiveView();
+    new InteractiveEventController(hidden, { color: false, showThinking: false }).render({
+      type: "message_delta",
+      role: "assistant",
+      kind: "thinking",
+      contentIndex: 0,
+      delta: "secret",
+      partial: fakeAssistant()
+    });
+    expect(hidden.thinking).toEqual([]);
+
+    const shown = new FakeInteractiveView();
+    new InteractiveEventController(shown, { color: false, showThinking: true }).render({
+      type: "message_delta",
+      role: "assistant",
+      kind: "thinking",
+      contentIndex: 0,
+      delta: "visible",
+      partial: fakeAssistant()
+    });
+    expect(shown.thinking.map((message) => message.text)).toEqual(["visible"]);
+  });
+
+  it("renders compact tool and failure statuses", () => {
+    const view = new FakeInteractiveView();
+    const controller = new InteractiveEventController(view, { color: false, showThinking: false });
+    const toolCall = fakeToolCall("read", { path: "note.txt" });
+
+    controller.render({ type: "tool_call_end", contentIndex: 0, toolCall, partial: fakeAssistant() });
+    controller.render({ type: "tool_result", toolCall, result: fakeToolResult(toolCall, "hello\nworld", false) });
+    controller.render({ type: "turn_end", context: fakeTurnContext(), reason: "max_iterations", iterations: 3 });
+
+    expect(view.statuses.join("\n")).toContain("tool read");
+    expect(view.statuses.join("\n")).toContain("done read hello world");
+    expect(view.statuses.join("\n")).toContain("max_iterations after 3 iteration(s)");
+  });
+
+  it("renders error and aborted statuses", () => {
+    const view = new FakeInteractiveView();
+    const controller = new InteractiveEventController(view, { color: false, showThinking: false });
+
+    controller.render({ type: "error", error: new Error("network down"), recoverable: false });
+    controller.render({ type: "turn_end", context: fakeTurnContext(), reason: "aborted", iterations: 1 });
+
+    expect(view.statuses.join("\n")).toContain("error network down");
+    expect(view.statuses.join("\n")).toContain("aborted after 1 iteration(s)");
+    expect(view.runningStates).toEqual([false]);
+  });
+
+  it("records submitted prompts in editor history", () => {
+    const history: string[] = [];
+
+    expect(rememberSubmittedPrompt({ addToHistory: (text) => history.push(text) }, "  hello  ")).toBe("hello");
+    expect(rememberSubmittedPrompt({ addToHistory: (text) => history.push(text) }, "   ")).toBeUndefined();
+    expect(history).toEqual(["hello"]);
+  });
+});
+
+class FakeMutableMessage implements MutableTuiMessage {
+  text = "";
+
+  append(delta: string): void {
+    this.text += delta;
+  }
+}
+
+class FakeInteractiveView implements InteractiveTuiView {
+  users: string[] = [];
+  assistants: FakeMutableMessage[] = [];
+  thinking: FakeMutableMessage[] = [];
+  statuses: string[] = [];
+  runningStates: boolean[] = [];
+  renderRequests = 0;
+  clears = 0;
+
+  addUserMessage(text: string): void {
+    this.users.push(text);
+  }
+
+  addAssistantMessage(): MutableTuiMessage {
+    const message = new FakeMutableMessage();
+    this.assistants.push(message);
+    return message;
+  }
+
+  addThinkingMessage(): MutableTuiMessage {
+    const message = new FakeMutableMessage();
+    this.thinking.push(message);
+    return message;
+  }
+
+  addStatusMessage(text: string): void {
+    this.statuses.push(stripAnsi(text));
+  }
+
+  clearMessages(): void {
+    this.clears++;
+  }
+
+  setRunning(running: boolean): void {
+    this.runningStates.push(running);
+  }
+
+  requestRender(): void {
+    this.renderRequests++;
+  }
+}
+
+function fakeAssistant(): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: "faux",
+    provider: "faux",
+    model: "faux",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+    },
+    stopReason: "stop",
+    timestamp: Date.now()
+  } as AssistantMessage;
+}
+
+function fakeTurnContext(): TurnContext {
+  return {
+    turnId: "turn-test",
+    cwd: "/tmp/project",
+    model: { provider: "faux", id: "faux" } as TurnContext["model"],
+    systemPrompt: "",
+    startedAt: Date.now(),
+    availableTools: [],
+    messageCount: 0
+  };
+}
+
+function fakeToolCall(name: string, args: Record<string, unknown>): ToolCall {
+  return {
+    type: "toolCall",
+    id: `call-${name}`,
+    name,
+    arguments: args
+  } as ToolCall;
+}
+
+function fakeToolResult(toolCall: ToolCall, text: string, isError: boolean): ToolResultMessage {
+  return {
+    role: "toolResult",
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    content: [{ type: "text", text }],
+    isError,
+    timestamp: Date.now()
+  };
+}

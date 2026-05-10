@@ -112,8 +112,18 @@ export function renderToolResult(result: ToolResultMessage, color: boolean): str
   return `  ${label} ${result.toolName}${preview}`;
 }
 
+export function renderToolCall(name: string, args: Record<string, unknown>, color: boolean): string {
+  return `  ${cyan("tool", color)} ${name} ${dim(formatArgs(args), color)}`;
+}
+
 export function stripAnsi(text: string): string {
   return text.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
+export function compactText(text: string, maxLength = 140): string {
+  const singleLine = text.replace(/\s+/g, " ").trim();
+  if (singleLine.length <= maxLength) return singleLine;
+  return `${singleLine.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function firstText(result: ToolResultMessage): string {
@@ -122,9 +132,7 @@ function firstText(result: ToolResultMessage): string {
 }
 
 function compact(text: string): string {
-  const singleLine = text.replace(/\s+/g, " ").trim();
-  if (singleLine.length <= 140) return singleLine;
-  return `${singleLine.slice(0, 137)}...`;
+  return compactText(text, 140);
 }
 
 function formatArgs(args: Record<string, unknown>): string {
