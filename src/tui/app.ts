@@ -8,6 +8,8 @@ import {
   Text,
   TUI,
   matchesKey,
+  truncateToWidth,
+  visibleWidth,
   type Component,
   type SlashCommand
 } from "@earendil-works/pi-tui";
@@ -275,7 +277,7 @@ class ArgonInteractiveTui {
     private readonly modelRegistry: ModelRegistry
   ) {
     this.theme = createArgonTuiTheme(options.color && Boolean(process.stdout.isTTY));
-    this.editor = new ImagePasteEditor(this.tui, this.theme.editor, { paddingX: 0, autocompleteMaxVisible: 8 });
+    this.editor = new ImagePasteEditor(this.tui, this.theme.editor, { paddingX: 1, autocompleteMaxVisible: 8 });
     this.view = new PiTuiConversationView(this.tui, this.editor, this.theme, options);
     this.controller = new InteractiveEventController(this.view, {
       color: options.color && Boolean(process.stdout.isTTY),
@@ -681,6 +683,23 @@ class ImagePasteEditor extends Editor {
   private imagePasteBuffer = "";
   private capturingPaste = false;
 
+  override render(width: number): string[] {
+    if (width <= 2) return super.render(width);
+
+    const innerWidth = Math.max(1, width - 2);
+    const editorLines = super.render(innerWidth);
+    const topRuleIndex = 0;
+    const bottomRuleIndex = findLastEditorRule(editorLines, innerWidth);
+    const contentLines = editorLines.filter((_, index) => index !== topRuleIndex && index !== bottomRuleIndex);
+    const body = contentLines.map((line) => padEditorLine(line, innerWidth));
+
+    return [
+      this.borderColor(`╭${"─".repeat(innerWidth)}╮`),
+      ...body.map((line) => `${this.borderColor("│")}${line}${this.borderColor("│")}`),
+      this.borderColor(`╰${"─".repeat(innerWidth)}╯`)
+    ];
+  }
+
   override handleInput(data: string): void {
     if (matchesKey(data, "ctrl+v") || matchesKey(data, "alt+v")) {
       this.onPasteImage?.();
@@ -721,6 +740,28 @@ class ImagePasteEditor extends Editor {
         if (remaining) this.handleInput(remaining);
       });
   }
+}
+
+function findLastEditorRule(lines: string[], width: number): number {
+  for (let index = lines.length - 1; index > 0; index--) {
+    if (isEditorRule(lines[index] ?? "", width)) return index;
+  }
+  return lines.length - 1;
+}
+
+function isEditorRule(line: string, width: number): boolean {
+  const plain = stripAnsi(line);
+  return visibleWidth(line) === width && (/^─+$/.test(plain) || /^─── [↑↓] \d+ more ─*$/.test(plain));
+}
+
+function padEditorLine(line: string, width: number): string {
+  const visible = visibleWidth(line);
+  if (visible > width) return truncateToWidth(line, width, "", true);
+  return `${line}${" ".repeat(width - visible)}`;
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
 class TextInputComponent implements Component {
@@ -792,15 +833,15 @@ export class PiTuiConversationView implements InteractiveTuiView {
   }
 
   addUserMessage(text: string): void {
-    this.addMarkdown(`**you**\n\n${text}`);
+    this.addMarkdown(`${this.roleLabel("you")}\n\n${text}`);
   }
 
   addAssistantMessage(): MutableTuiMessage {
-    return this.addMutableMarkdown("**assistant**\n\n");
+    return this.addMutableMarkdown(`${this.roleLabel("assistant")}\n\n`);
   }
 
   addThinkingMessage(): MutableTuiMessage {
-    return this.addMutableMarkdown("**thinking**\n\n", { dim: true });
+    return this.addMutableMarkdown(`${this.roleLabel("thinking")}\n\n`, { dim: true });
   }
 
   addAssistantDivider(): void {
@@ -830,7 +871,7 @@ export class PiTuiConversationView implements InteractiveTuiView {
         this.addUserMessage(messageText(message));
       } else if (message.role === "assistant") {
         const text = messageText(message);
-        if (text) this.addMarkdown(`**assistant**\n\n${text}`);
+        if (text) this.addMarkdown(`${this.roleLabel("assistant")}\n\n${text}`);
         for (const toolCall of messageToolCalls(message)) {
           pendingToolStatuses.set(
             toolCall.id,
@@ -898,15 +939,21 @@ export class PiTuiConversationView implements InteractiveTuiView {
   }
 
   private addMarkdown(text: string): Markdown {
-    const markdown = new Markdown(text, 1, 1, this.theme.markdown);
+    const markdown = new Markdown(text, 2, 0, this.theme.markdown);
     this.addComponent(markdown);
     return markdown;
+  }
+
+  private roleLabel(role: "you" | "assistant" | "thinking"): string {
+    if (role === "you") return this.theme.ansi.cyan(role);
+    if (role === "assistant") return this.theme.ansi.green(role);
+    return this.theme.ansi.dim(role);
   }
 
   private addMutableMarkdown(prefix: string, options: { dim?: boolean } = {}): MutableTuiMessage {
     let content = "";
     const style = options.dim ? { color: this.theme.ansi.dim } : undefined;
-    const markdown = new Markdown(prefix, 1, 1, this.theme.markdown, style);
+    const markdown = new Markdown(prefix, 2, 0, this.theme.markdown, style);
     this.addComponent(markdown);
     return {
       append: (delta: string) => {
