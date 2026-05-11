@@ -35,8 +35,33 @@ export interface TurnContext {
 
 export type TurnEndReason = "stop" | "max_iterations" | "error" | "aborted";
 
+export type CompactionReason = "manual" | "threshold" | "overflow";
+
+export interface CompactionSettings {
+  enabled: boolean;
+  reserveTokens: number;
+  keepRecentTokens: number;
+}
+
+export interface CompactionResult {
+  summary: string;
+  firstKeptEntryId?: string | undefined;
+  tokensBefore: number;
+  messagesBefore: number;
+  messagesAfter: number;
+}
+
 export type AgentEvent =
   | { type: "turn_start"; context: TurnContext }
+  | { type: "compaction_start"; reason: CompactionReason; tokensBefore: number; messagesBefore: number }
+  | {
+      type: "compaction_end";
+      reason: CompactionReason;
+      result?: CompactionResult | undefined;
+      errorMessage?: string | undefined;
+      aborted: boolean;
+      willRetry: boolean;
+    }
   | { type: "message_start"; message: AgentMessage }
   | {
       type: "message_delta";
@@ -130,6 +155,7 @@ export interface RunOptions {
   sessionId?: string | undefined;
   strategy?: LoopStrategy | undefined;
   followUps?: UserInput[] | undefined;
+  compaction?: Partial<CompactionSettings> | undefined;
 }
 
 export interface AgentRuntimeConfig {
@@ -143,10 +169,11 @@ export interface AgentRuntimeConfig {
   stream?: StreamProvider | undefined;
   eventLogPath?: string | undefined;
   session?: SessionManager | undefined;
+  compaction?: Partial<CompactionSettings> | undefined;
 }
 
 export interface RunTurnParams {
-  input: UserInput;
+  input?: UserInput | undefined;
   messages: AgentMessage[];
   model: Model<any>;
   cwd: string;

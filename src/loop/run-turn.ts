@@ -40,10 +40,12 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
   const followUps = [...(params.options?.followUps ?? [])];
 
   yield { type: "turn_start", context: turn };
-  appendUserInput(params.messages, params.input);
-  const firstUserMessage = params.messages[params.messages.length - 1]!;
-  yield { type: "message_start", message: firstUserMessage };
-  yield { type: "message_end", message: firstUserMessage };
+  if (params.input !== undefined) {
+    appendUserInput(params.messages, params.input);
+    const firstUserMessage = params.messages[params.messages.length - 1]!;
+    yield { type: "message_start", message: firstUserMessage };
+    yield { type: "message_end", message: firstUserMessage };
+  }
 
   while (true) {
     if (maxIterations !== undefined && iterations >= maxIterations) {

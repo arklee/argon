@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { loadUserSettings } from "../config/settings.js";
 import { isThinkingLevel, type ArgonThinkingLevel } from "../thinking.js";
 import { loadTuiConfig, type TuiConfig } from "./config.js";
+import type { CompactionSettings } from "../types.js";
 
 const DEFAULT_PROVIDER = "openai";
 const DEFAULT_MODEL = "gpt-5.2-codex";
@@ -24,6 +25,7 @@ export interface TuiOptions {
   eventLogPath?: string;
   sessionId?: string;
   reasoning?: ArgonThinkingLevel;
+  compaction?: Partial<CompactionSettings>;
 }
 
 export interface ParsedTuiOptions {
@@ -222,7 +224,7 @@ Config:
   argon.config.json, .argon/settings.json, or .argon/model.json in cwd or a parent directory.
 
 Interactive commands:
-  /help, /status, /model, /thinking, /reasoning, /login, /session, /resume, /tree, /clear, /exit
+  /help, /status, /model, /thinking, /reasoning, /login, /session, /resume, /tree, /compact, /clear, /exit
 `;
 }
 
@@ -239,6 +241,7 @@ function applyConfig(options: TuiOptions, config: TuiConfig): void {
   if (config.eventLogPath !== undefined) options.eventLogPath = config.eventLogPath;
   if (config.sessionId !== undefined) options.sessionId = config.sessionId;
   if (config.reasoning !== undefined) options.reasoning = config.reasoning;
+  if (config.compaction !== undefined) options.compaction = config.compaction;
 }
 
 function applyEnv(options: TuiOptions, env: NodeJS.ProcessEnv): void {

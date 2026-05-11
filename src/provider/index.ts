@@ -1,4 +1,4 @@
-import { streamSimple, type Context, type Model, type SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { completeSimple, streamSimple, type Context, type Model, type SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { toProviderReasoning, type ArgonThinkingLevel } from "../thinking.js";
 import type { ApiKeyResolver, RequestAuthResolver, StreamProvider } from "../types.js";
 import { configureGlobalProxyFromEnv } from "./proxy.js";
@@ -31,4 +31,28 @@ export async function streamWithProvider(options: {
   if (providerReasoning !== undefined) streamOptions.reasoning = providerReasoning;
   if (options.sessionId !== undefined) streamOptions.sessionId = options.sessionId;
   return stream(options.model, options.context, streamOptions);
+}
+
+export async function completeWithProvider(options: {
+  model: Model<any>;
+  context: Context;
+  apiKey?: ApiKeyResolver | undefined;
+  requestAuth?: RequestAuthResolver | undefined;
+  signal?: AbortSignal | undefined;
+  reasoning?: ArgonThinkingLevel;
+  maxTokens?: number | undefined;
+  sessionId?: string | undefined;
+}) {
+  configureGlobalProxyFromEnv();
+  const resolvedAuth = await options.requestAuth?.(options.model);
+  const apiKey = resolvedAuth?.apiKey ?? (await resolveApiKey(options.apiKey, options.model.provider));
+  const streamOptions: SimpleStreamOptions = {};
+  if (apiKey !== undefined) streamOptions.apiKey = apiKey;
+  if (resolvedAuth?.headers !== undefined) streamOptions.headers = resolvedAuth.headers;
+  if (options.signal !== undefined) streamOptions.signal = options.signal;
+  if (options.maxTokens !== undefined) streamOptions.maxTokens = options.maxTokens;
+  const providerReasoning = toProviderReasoning(options.reasoning);
+  if (providerReasoning !== undefined) streamOptions.reasoning = providerReasoning;
+  if (options.sessionId !== undefined) streamOptions.sessionId = options.sessionId;
+  return completeSimple(options.model, options.context, streamOptions);
 }

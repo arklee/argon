@@ -26,6 +26,12 @@ Record types:
 - `message`: a pi-ai compatible `AgentMessage`.
 - `model_change`: provider/model selection for the branch.
 - `branch`: a tree navigation marker created by `/tree`.
+- `compaction`: an append-only summary boundary with `summary`, `firstKeptEntryId`, `tokensBefore`, and `reason`.
+
+When a branch contains a `compaction` record, Argon rebuilds model context from the latest
+compaction by injecting the summary first, then the messages from `firstKeptEntryId` through
+the compaction boundary, then messages appended after compaction. Earlier raw messages remain
+in the JSONL file for history/tree navigation but are not sent to the model.
 
 Malformed JSONL lines are skipped during load. Files without a valid `session` header are not
 loaded as sessions.

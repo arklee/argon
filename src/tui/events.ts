@@ -28,6 +28,18 @@ export class TuiEventRenderer {
       case "turn_start":
         this.line(dim(`\nargon`, this.color) + dim(` ${event.context.model.provider}/${event.context.model.id}`, this.color));
         break;
+      case "compaction_start":
+        this.closeStreamingBlocks();
+        this.line(dim(`compacting ${event.messagesBefore} message(s), ${event.tokensBefore} token(s)`, this.color));
+        break;
+      case "compaction_end":
+        this.closeStreamingBlocks();
+        if (event.result) {
+          this.line(dim(`compacted ${event.result.messagesBefore} -> ${event.result.messagesAfter} message(s)`, this.color));
+        } else if (event.errorMessage) {
+          this.line(`${yellow("compact failed", this.color)} ${event.errorMessage}`);
+        }
+        break;
       case "message_delta":
         if (event.kind === "text") {
           this.openAssistant();

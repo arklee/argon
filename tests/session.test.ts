@@ -129,6 +129,25 @@ describe("SessionManager", () => {
     expect(session.tree().some((row) => row.entry.type === "branch" && row.depth > 0)).toBe(true);
   });
 
+  it("rebuilds context from latest compaction summary and kept messages", async () => {
+    const cwd = await tempDir();
+    const session = SessionManager.create(cwd, join(cwd, ".sessions"));
+    const old = session.appendMessage(userMessage("old request"));
+    session.appendMessage(assistantMessage("old answer"));
+    const kept = session.appendMessage(userMessage("recent request"));
+    session.appendMessage(assistantMessage("recent answer"));
+    session.appendCompaction("summary of old work", kept, 1000, "manual");
+    session.appendMessage(userMessage("after compact"));
+
+    expect(old).toBeTruthy();
+    const reopened = SessionManager.open(session.getSessionFile());
+    const context = reopened.buildContext().messages;
+    expect(context.map((message) => message.role)).toEqual(["user", "user", "assistant", "user"]);
+    expect(context[0]?.role === "user" ? context[0].content : "").toContain("summary of old work");
+    expect(context[1]?.role === "user" ? context[1].content : "").toBe("recent request");
+    expect(context[3]?.role === "user" ? context[3].content : "").toBe("after compact");
+  });
+
   it("finds recent sessions and resolves id prefixes", async () => {
     const cwd = await tempDir();
     const sessionDir = join(cwd, ".sessions");

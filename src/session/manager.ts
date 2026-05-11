@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { createCompactionSummaryMessage } from "../compaction/index.js";
+import type { CompactionReason } from "../types.js";
 
 export const CURRENT_SESSION_VERSION = 1;
 
@@ -48,11 +50,20 @@ export interface SessionBranchEntry extends SessionEntryBase {
   note?: string;
 }
 
+export interface SessionCompactionEntry extends SessionEntryBase {
+  type: "compaction";
+  summary: string;
+  firstKeptEntryId: string;
+  tokensBefore: number;
+  reason: CompactionReason;
+}
+
 export type SessionEntry =
   | SessionTurnContextEntry
   | SessionMessageEntry
   | SessionModelChangeEntry
-  | SessionBranchEntry;
+  | SessionBranchEntry
+  | SessionCompactionEntry;
 
 export type SessionRecord = SessionHeader | SessionEntry;
 
@@ -286,6 +297,20 @@ export class SessionManager {
     return this.appendEntry(entry);
   }
 
+  appendCompaction(summary: string, firstKeptEntryId: string, tokensBefore: number, reason: CompactionReason): string {
+    const entry: SessionCompactionEntry = {
+      type: "compaction",
+      id: createEntryId(this.byId),
+      parentId: this.leafId,
+      timestamp: new Date().toISOString(),
+      summary,
+      firstKeptEntryId,
+      tokensBefore,
+      reason
+    };
+    return this.appendEntry(entry);
+  }
+
   branchTo(entryId: string | null, note?: string): void {
     if (entryId !== null && !this.byId.has(entryId)) {
       throw new Error(`Session entry not found: ${entryId}`);
@@ -306,15 +331,36 @@ export class SessionManager {
     const messages: AgentMessage[] = [];
     let model: SessionContext["model"] = null;
     let reasoning: RunOptions["reasoning"] | undefined;
+    const latestCompactionIndex = findLatestCompactionIndex(branch);
     for (const entry of branch) {
-      if (entry.type === "message") {
-        messages.push(structuredClone(entry.message));
-      } else if (entry.type === "model_change") {
+      if (entry.type === "model_change") {
         model = { provider: entry.provider, modelId: entry.modelId };
       } else if (entry.type === "turn_context") {
         model = { provider: entry.provider, modelId: entry.modelId };
         reasoning = entry.reasoning;
       }
+    }
+
+    if (latestCompactionIndex !== -1) {
+      const compaction = branch[latestCompactionIndex] as SessionCompactionEntry;
+      messages.push(createCompactionSummaryMessage(compaction.summary, Date.parse(compaction.timestamp)));
+
+      let foundFirstKept = false;
+      for (let index = 0; index < latestCompactionIndex; index++) {
+        const entry = branch[index]!;
+        if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
+        if (foundFirstKept && entry.type === "message") messages.push(structuredClone(entry.message));
+      }
+
+      for (let index = latestCompactionIndex + 1; index < branch.length; index++) {
+        const entry = branch[index]!;
+        if (entry.type === "message") messages.push(structuredClone(entry.message));
+      }
+      return { messages, model, reasoning };
+    }
+
+    for (const entry of branch) {
+      if (entry.type === "message") messages.push(structuredClone(entry.message));
     }
     return { messages, model, reasoning };
   }
@@ -429,7 +475,16 @@ function previewEntry(entry: SessionEntry): string {
       return `model ${entry.provider}/${entry.modelId}`;
     case "branch":
       return `branch${entry.note ? ` ${entry.note}` : ""}`;
+    case "compaction":
+      return `compaction ${entry.tokensBefore} tokens`;
   }
+}
+
+function findLatestCompactionIndex(branch: readonly SessionEntry[]): number {
+  for (let index = branch.length - 1; index >= 0; index--) {
+    if (branch[index]?.type === "compaction") return index;
+  }
+  return -1;
 }
 
 function messageText(message: AgentMessage): string {

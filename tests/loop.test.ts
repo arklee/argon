@@ -31,6 +31,15 @@ function firstText(message: { content: Array<{ type: string; text?: string }> })
   return block?.type === "text" ? (block.text ?? "") : "";
 }
 
+function withTotalTokens(message: ReturnType<typeof fauxAssistantMessage>, totalTokens: number): ReturnType<typeof fauxAssistantMessage> {
+  message.usage = {
+    ...message.usage,
+    input: totalTokens,
+    totalTokens
+  };
+  return message;
+}
+
 describe("AgentRuntime loop", () => {
   let faux: FauxProviderRegistration | undefined;
 
@@ -156,6 +165,97 @@ describe("AgentRuntime loop", () => {
       session: reopened
     });
     await collect(resumed.run("continue"));
+  });
+
+  it("manually compacts persisted session context", async () => {
+    const cwd = await tempDir();
+    const session = SessionManager.create(cwd, join(cwd, ".sessions"));
+    session.appendMessage({ role: "user", content: "old request", timestamp: Date.now() });
+    session.appendMessage(fauxAssistantMessage("old answer"));
+    session.appendMessage({ role: "user", content: "recent request", timestamp: Date.now() });
+    session.appendMessage(fauxAssistantMessage("recent answer"));
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([fauxAssistantMessage("summary of old work")]);
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd,
+      tools: [],
+      apiKey: "test",
+      session
+    });
+
+    const events = await collect(runtime.compact(undefined, { compaction: { keepRecentTokens: 1 } }));
+    expect(events.map((event) => event.type)).toContain("compaction_start");
+    expect(events.at(-1)).toMatchObject({ type: "compaction_end", result: { summary: "summary of old work" } });
+    const compactedFirst = runtime.messages()[0];
+    expect(compactedFirst?.role === "user" ? compactedFirst.content : "").toContain("summary of old work");
+    expect(SessionManager.open(session.getSessionFile()).buildContext().messages[0]?.role).toBe("user");
+  });
+
+  it("auto-compacts after a turn crosses the configured threshold", async () => {
+    const cwd = await tempDir();
+    const session = SessionManager.create(cwd, join(cwd, ".sessions"));
+    session.appendMessage({ role: "user", content: "old request", timestamp: Date.now() });
+    session.appendMessage(fauxAssistantMessage("old answer"));
+    faux = registerFauxProvider({
+      tokensPerSecond: 0,
+      tokenSize: { min: 1, max: 1 },
+      models: [{ id: "tiny", contextWindow: 1_000_000 }]
+    });
+    faux.setResponses([
+      withTotalTokens(fauxAssistantMessage("large answer"), 25),
+      fauxAssistantMessage("compact summary")
+    ]);
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd,
+      tools: [],
+      apiKey: "test",
+      session
+    });
+
+    const events = await collect(runtime.run("new request", { compaction: { reserveTokens: 999_999, keepRecentTokens: 1 } }));
+    expect(events.some((event) => event.type === "compaction_start" && event.reason === "threshold")).toBe(true);
+    const compactedFirst = runtime.messages()[0];
+    expect(compactedFirst?.role === "user" ? compactedFirst.content : "").toContain("compact summary");
+  });
+
+  it("compacts and retries once after context overflow", async () => {
+    const cwd = await tempDir();
+    const session = SessionManager.create(cwd, join(cwd, ".sessions"));
+    session.appendMessage({ role: "user", content: "old request", timestamp: Date.now() });
+    session.appendMessage(fauxAssistantMessage("old answer"));
+    faux = registerFauxProvider({
+      tokensPerSecond: 0,
+      tokenSize: { min: 1000, max: 1000 },
+      models: [{ id: "tiny", contextWindow: 20 }]
+    });
+    faux.setResponses([
+      fauxAssistantMessage([], { stopReason: "error", errorMessage: "This model's maximum context length is 20 tokens." }),
+      fauxAssistantMessage("overflow summary"),
+      (context) => {
+        expect(context.messages.filter((message) => message.role === "user" && message.content === "continue")).toHaveLength(1);
+        expect(context.messages[0]?.role === "user" ? context.messages[0].content : "").toContain("overflow summary");
+        return fauxAssistantMessage("recovered");
+      }
+    ]);
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd,
+      tools: [],
+      apiKey: "test",
+      session
+    });
+
+    const events = await collect(runtime.run("continue", { compaction: { keepRecentTokens: 1 } }));
+    expect(events.some((event) => event.type === "compaction_start" && event.reason === "overflow")).toBe(true);
+    expect(runtime.messages().at(-1)).toMatchObject({ role: "assistant", stopReason: "stop" });
+    expect(SessionManager.open(session.getSessionFile()).buildContext().messages.some((message) => message.role === "assistant" && message.stopReason === "error")).toBe(
+      false
+    );
   });
 
   it("executes a tool call and continues with the tool result in context", async () => {

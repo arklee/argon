@@ -91,6 +91,7 @@ describe("TUI options", () => {
         model: "claude-sonnet-4-5",
         baseUrl: "https://example.test/v1",
         reasoning: "off",
+        compaction: { enabled: false, reserveTokens: 1000, keepRecentTokens: 500 },
         apiKey: "config-key",
         apiKeyEnv: "ANTHROPIC_API_KEY",
         eventLogPath: ".argon/events.jsonl"
@@ -105,6 +106,7 @@ describe("TUI options", () => {
       modelId: "gpt-5.2-codex",
       baseUrl: "https://example.test/v1",
       reasoning: "off",
+      compaction: { enabled: false, reserveTokens: 1000, keepRecentTokens: 500 },
       apiKey: "config-key",
       apiKeyEnv: "ANTHROPIC_API_KEY",
       eventLogPath: join(dir, ".argon/events.jsonl")
@@ -211,6 +213,12 @@ describe("Interactive TUI commands", () => {
     expect(resolveSlashCommand("/login", context)).toMatchObject({ handled: true, action: "login" });
     expect(resolveSlashCommand("/resume", context)).toMatchObject({ handled: true, action: "resume" });
     expect(resolveSlashCommand("/tree", context)).toMatchObject({ handled: true, action: "tree" });
+    expect(resolveSlashCommand("/compact", context)).toMatchObject({ handled: true, action: "compact" });
+    expect(resolveSlashCommand("/compact focus files", context)).toMatchObject({
+      handled: true,
+      action: "compact",
+      instructions: "focus files"
+    });
     expect(resolveSlashCommand("/clear", context)).toMatchObject({ handled: true, action: "clear" });
     expect(resolveSlashCommand("/exit", context)).toMatchObject({ handled: true, action: "exit" });
     expect(resolveSlashCommand("hello", context)).toEqual({ handled: false });
@@ -232,6 +240,7 @@ describe("Interactive TUI commands", () => {
       "session",
       "resume",
       "tree",
+      "compact",
       "clear",
       "exit",
       "quit"

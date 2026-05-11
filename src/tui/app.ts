@@ -38,7 +38,7 @@ import {
   type LocalImageAttachment
 } from "./image-paste.js";
 
-const COMMAND_HELP = "Commands: /help, /status, /model, /thinking, /reasoning, /login, /session, /resume, /tree, /clear, /exit";
+const COMMAND_HELP = "Commands: /help, /status, /model, /thinking, /reasoning, /login, /session, /resume, /tree, /compact, /clear, /exit";
 
 export const TUI_SLASH_COMMANDS: SlashCommand[] = [
   { name: "help", description: "Show available commands" },
@@ -50,6 +50,7 @@ export const TUI_SLASH_COMMANDS: SlashCommand[] = [
   { name: "session", description: "Show current session details" },
   { name: "resume", description: "Resume a previous session" },
   { name: "tree", description: "Navigate the current session tree" },
+  { name: "compact", description: "Compact conversation context" },
   { name: "clear", description: "Clear chat messages" },
   { name: "exit", description: "Exit Argon" },
   { name: "quit", description: "Exit Argon" }
@@ -62,6 +63,7 @@ export type SlashCommandResult =
   | { handled: true; action: "exit" }
   | { handled: true; action: "resume" }
   | { handled: true; action: "tree" }
+  | { handled: true; action: "compact"; instructions?: string | undefined }
   | { handled: true; action: "model" }
   | { handled: true; action: "thinking" }
   | { handled: true; action: "login" };
@@ -112,6 +114,20 @@ export class InteractiveEventController {
     switch (event.type) {
       case "turn_start":
         this.view.setRunning(true);
+        break;
+      case "compaction_start":
+        this.closeStreamingBlocks();
+        this.view.setRunning(true);
+        this.view.addStatusMessage(`  compacting ${event.messagesBefore} message(s), ${event.tokensBefore} token(s)`);
+        break;
+      case "compaction_end":
+        this.closeStreamingBlocks();
+        this.view.setRunning(false);
+        this.view.addStatusMessage(
+          event.result
+            ? `  compacted ${event.result.messagesBefore} -> ${event.result.messagesAfter} message(s)`
+            : `  compact failed${event.errorMessage ? `: ${event.errorMessage}` : ""}`
+        );
         break;
       case "message_delta":
         if (event.kind === "text") {
@@ -200,6 +216,8 @@ export function resolveSlashCommand(input: string, context: SlashCommandContext)
       return { handled: true, action: "resume" };
     case "/tree":
       return { handled: true, action: "tree" };
+    case "/compact":
+      return { handled: true, action: "compact" };
     case "/model":
       return { handled: true, action: "model" };
     case "/thinking":
@@ -213,6 +231,9 @@ export function resolveSlashCommand(input: string, context: SlashCommandContext)
     case "/quit":
       return { handled: true, action: "exit" };
     default:
+      if (command.startsWith("/compact ")) {
+        return { handled: true, action: "compact", instructions: command.slice("/compact ".length).trim() };
+      }
       if (command.startsWith("/")) {
         return { handled: true, action: "message", message: `Unknown command: ${command}` };
       }
@@ -222,7 +243,8 @@ export function resolveSlashCommand(input: string, context: SlashCommandContext)
 
 export function createInteractiveRunOptions(options: TuiOptions): RunOptions {
   return {
-    ...(options.reasoning ? { reasoning: options.reasoning } : {})
+    ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+    ...(options.compaction ? { compaction: options.compaction } : {})
   };
 }
 
@@ -327,6 +349,8 @@ class ArgonInteractiveTui {
         await this.handleResumeCommand();
       } else if (command.action === "tree") {
         await this.handleTreeCommand();
+      } else if (command.action === "compact") {
+        await this.handleCompactCommand(command.instructions);
       } else if (command.action === "model") {
         await this.handleModelCommand();
       } else if (command.action === "thinking") {
@@ -374,6 +398,27 @@ class ArgonInteractiveTui {
         this.controller.render(event);
       }
       this.imageAttachments = [];
+    } catch (error) {
+      this.view.addStatusMessage(`error ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.running = false;
+      this.editor.disableSubmit = false;
+      this.view.setRunning(false);
+      this.tui.setFocus(this.editor);
+      this.view.requestRender();
+    }
+  }
+
+  private async handleCompactCommand(instructions?: string): Promise<void> {
+    this.running = true;
+    this.editor.disableSubmit = true;
+    this.view.setRunning(true);
+    try {
+      for await (const event of this.runtime.compact(instructions, createInteractiveRunOptions(this.options))) {
+        this.controller.render(event);
+      }
+      this.view.clearMessages();
+      this.view.renderMessages?.(this.runtime.messages());
     } catch (error) {
       this.view.addStatusMessage(`error ${error instanceof Error ? error.message : String(error)}`);
     } finally {

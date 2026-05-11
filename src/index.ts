@@ -1,5 +1,14 @@
 export { AgentRuntime } from "./runtime.js";
 export { runTurn } from "./loop/run-turn.js";
+export {
+  COMPACTION_SUMMARY_PREFIX,
+  DEFAULT_COMPACTION_SETTINGS,
+  createCompactionSummaryMessage,
+  estimateContextTokens,
+  estimateMessageTokens,
+  resolveCompactionSettings,
+  shouldCompact
+} from "./compaction/index.js";
 export { configureGlobalProxyFromEnv, resolveProxyEnv } from "./provider/proxy.js";
 export { PromptManager, discoverAgentsInstructions, findProjectRoot } from "./prompt/manager.js";
 export { AuthStorage, FileAuthStorageBackend, InMemoryAuthStorageBackend, getDefaultAuthPath } from "./auth/storage.js";
@@ -39,6 +48,7 @@ export type {
   SessionInfo,
   SessionMessageEntry,
   SessionModelChangeEntry,
+  SessionCompactionEntry,
   SessionRecord,
   SessionTreeNode,
   SessionTurnContextEntry

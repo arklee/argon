@@ -110,7 +110,8 @@ function createRuntime(
     },
     ...(options.eventLogPath ? { eventLogPath: options.eventLogPath } : {}),
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
-    ...(session ? { session } : {})
+    ...(session ? { session } : {}),
+    ...(options.compaction ? { compaction: options.compaction } : {})
   };
   return new AgentRuntime(config);
 }
@@ -132,7 +133,8 @@ async function runPrompt(
 
   try {
     const runOptions = {
-      ...(options.reasoning ? { reasoning: options.reasoning } : {})
+      ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+      ...(options.compaction ? { compaction: options.compaction } : {})
     };
 
     for await (const event of runtime.run(prompt, runOptions)) {

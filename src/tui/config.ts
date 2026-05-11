@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { isThinkingLevel, type ArgonThinkingLevel } from "../thinking.js";
+import type { CompactionSettings } from "../types.js";
 
 export const DEFAULT_CONFIG_FILES = ["argon.config.json", ".argon/settings.json", ".argon/model.json"] as const;
 
@@ -17,6 +18,7 @@ export interface TuiConfig {
   eventLogPath?: string;
   sessionId?: string;
   reasoning?: ArgonThinkingLevel;
+  compaction?: Partial<CompactionSettings>;
 }
 
 export interface LoadedTuiConfig {
@@ -106,6 +108,9 @@ function normalizeConfig(value: unknown, baseDir: string): TuiConfig {
     config.reasoning = reasoning;
   }
 
+  const compaction = optionalCompaction(value, "compaction");
+  if (compaction !== undefined) config.compaction = compaction;
+
   return config;
 }
 
@@ -125,6 +130,29 @@ function optionalBoolean(value: Record<string, unknown>, key: string): boolean |
     throw new Error(`${key} must be a boolean`);
   }
   return candidate;
+}
+
+function optionalCompaction(value: Record<string, unknown>, key: string): Partial<CompactionSettings> | undefined {
+  const candidate = value[key];
+  if (candidate === undefined) return undefined;
+  if (!isRecord(candidate)) throw new Error(`${key} must be an object`);
+  const settings: Partial<CompactionSettings> = {};
+  const enabled = optionalBoolean(candidate, "enabled");
+  if (enabled !== undefined) settings.enabled = enabled;
+  const reserveTokens = optionalPositiveInteger(candidate, "reserveTokens");
+  if (reserveTokens !== undefined) settings.reserveTokens = reserveTokens;
+  const keepRecentTokens = optionalPositiveInteger(candidate, "keepRecentTokens");
+  if (keepRecentTokens !== undefined) settings.keepRecentTokens = keepRecentTokens;
+  return settings;
+}
+
+function optionalPositiveInteger(value: Record<string, unknown>, key: string): number | undefined {
+  const candidate = value[key];
+  if (candidate === undefined) return undefined;
+  if (typeof candidate !== "number" || !Number.isFinite(candidate) || candidate <= 0) {
+    throw new Error(`${key} must be a positive number`);
+  }
+  return Math.floor(candidate);
 }
 
 function resolvePath(baseDir: string, value: string): string {
