@@ -24,11 +24,19 @@ import {
   supportedThinkingLevels,
   type ArgonThinkingLevel
 } from "../thinking.js";
-import type { AgentEvent, AgentMessage, RunOptions } from "../types.js";
+import type { AgentEvent, AgentMessage, RunOptions, UserInput } from "../types.js";
 import { compactText, renderToolCall, renderToolResult } from "./events.js";
 import { createArgonTuiTheme, type ArgonTuiTheme } from "./theme.js";
 import type { TuiOptions } from "./options.js";
 import { PickerComponent, type SelectionItem } from "./selectors.js";
+import {
+  currentModelSupportsImages,
+  displayImageAttachment,
+  maybeCreateAttachmentFromPastedPath,
+  pasteClipboardImageToTempFile,
+  prepareImageInput,
+  type LocalImageAttachment
+} from "./image-paste.js";
 
 const COMMAND_HELP = "Commands: /help, /status, /model, /thinking, /reasoning, /login, /session, /resume, /tree, /clear, /exit";
 
@@ -229,9 +237,10 @@ class ArgonInteractiveTui {
   private readonly terminal = new ProcessTerminal();
   private readonly tui = new TUI(this.terminal);
   private readonly theme: ArgonTuiTheme;
-  private readonly editor: Editor;
+  private readonly editor: ImagePasteEditor;
   private readonly view: PiTuiConversationView;
   private readonly controller: InteractiveEventController;
+  private imageAttachments: LocalImageAttachment[] = [];
   private running = false;
   private stopped = false;
   private resolveRun: (() => void) | undefined;
@@ -242,7 +251,7 @@ class ArgonInteractiveTui {
     private readonly modelRegistry: ModelRegistry
   ) {
     this.theme = createArgonTuiTheme(options.color && Boolean(process.stdout.isTTY));
-    this.editor = new Editor(this.tui, this.theme.editor, { paddingX: 0, autocompleteMaxVisible: 8 });
+    this.editor = new ImagePasteEditor(this.tui, this.theme.editor, { paddingX: 0, autocompleteMaxVisible: 8 });
     this.view = new PiTuiConversationView(this.tui, this.editor, this.theme, options);
     this.controller = new InteractiveEventController(this.view, {
       color: options.color && Boolean(process.stdout.isTTY),
@@ -264,6 +273,10 @@ class ArgonInteractiveTui {
     this.editor.onSubmit = (text) => {
       void this.submit(text);
     };
+    this.editor.onPasteImage = () => {
+      void this.attachClipboardImage();
+    };
+    this.editor.onPasteText = async (text) => await this.attachPastedImagePath(text);
 
     this.tui.addInputListener((data) => {
       if (!matchesKey(data, "ctrl+c")) return undefined;
@@ -327,17 +340,40 @@ class ArgonInteractiveTui {
       return;
     }
 
-    const prompt = rememberSubmittedPrompt(this.editor, trimmed);
+    let runInput: UserInput = trimmed;
+    let prompt = rememberSubmittedPrompt(this.editor, trimmed);
     if (!prompt) return;
+
+    if (this.imageAttachments.length > 0) {
+      if (!currentModelSupportsImages(activeModel)) {
+        this.editor.setText(trimmed);
+        this.view.addStatusMessage(this.theme.ansi.yellow(`Model ${activeModel.id} does not support image inputs.`));
+        this.view.requestRender();
+        return;
+      }
+
+      try {
+        const prepared = await prepareImageInput(trimmed, this.imageAttachments);
+        this.imageAttachments = prepared.attachments;
+        runInput = { content: prepared.content };
+        prompt = prepared.text;
+      } catch (error) {
+        this.editor.setText(trimmed);
+        this.view.addStatusMessage(`error ${error instanceof Error ? error.message : String(error)}`);
+        this.view.requestRender();
+        return;
+      }
+    }
 
     this.running = true;
     this.editor.disableSubmit = true;
     this.controller.beginRun(prompt);
 
     try {
-      for await (const event of this.runtime.run(prompt, createInteractiveRunOptions(this.options))) {
+      for await (const event of this.runtime.run(runInput, createInteractiveRunOptions(this.options))) {
         this.controller.render(event);
       }
+      this.imageAttachments = [];
     } catch (error) {
       this.view.addStatusMessage(`error ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -347,6 +383,44 @@ class ArgonInteractiveTui {
       this.tui.setFocus(this.editor);
       this.view.requestRender();
     }
+  }
+
+  private async attachClipboardImage(): Promise<void> {
+    if (this.running || this.stopped) return;
+    const model = this.runtime.getModel();
+    if (!currentModelSupportsImages(model)) {
+      this.view.addStatusMessage(this.theme.ansi.yellow(`Model ${model.id} does not support image inputs.`));
+      this.view.requestRender();
+      return;
+    }
+
+    try {
+      const attachment = await pasteClipboardImageToTempFile(this.imageAttachments);
+      if (!attachment) {
+        this.view.addStatusMessage(this.theme.ansi.dim("No image found on clipboard."));
+        this.view.requestRender();
+        return;
+      }
+      this.addImageAttachment(attachment, { trailingSpace: false });
+    } catch (error) {
+      this.view.addStatusMessage(`error Failed to paste image: ${error instanceof Error ? error.message : String(error)}`);
+      this.view.requestRender();
+    }
+  }
+
+  private async attachPastedImagePath(text: string): Promise<boolean> {
+    if (this.running || this.stopped || !currentModelSupportsImages(this.runtime.getModel())) return false;
+    const attachment = await maybeCreateAttachmentFromPastedPath(text, this.imageAttachments);
+    if (!attachment) return false;
+    this.addImageAttachment(attachment, { trailingSpace: true });
+    return true;
+  }
+
+  private addImageAttachment(attachment: LocalImageAttachment, options: { trailingSpace: boolean }): void {
+    this.imageAttachments.push(attachment);
+    this.editor.insertTextAtCursor(`${attachment.placeholder}${options.trailingSpace ? " " : ""}`);
+    this.view.addStatusMessage(this.theme.ansi.dim(`Attached ${displayImageAttachment(attachment)}`));
+    this.view.requestRender();
   }
 
   private async handleResumeCommand(): Promise<void> {
@@ -573,6 +647,54 @@ class ArgonInteractiveTui {
     await this.terminal.drainInput(250, 20);
     this.tui.stop();
     this.resolveRun?.();
+  }
+}
+
+class ImagePasteEditor extends Editor {
+  onPasteImage?: () => void;
+  onPasteText?: (text: string) => boolean | Promise<boolean>;
+  private imagePasteBuffer = "";
+  private capturingPaste = false;
+
+  override handleInput(data: string): void {
+    if (matchesKey(data, "ctrl+v") || matchesKey(data, "alt+v")) {
+      this.onPasteImage?.();
+      return;
+    }
+
+    const start = "\x1b[200~";
+    const end = "\x1b[201~";
+    if (data.includes(start) || this.capturingPaste) {
+      this.capturePasteChunk(data, start, end);
+      return;
+    }
+
+    super.handleInput(data);
+  }
+
+  private capturePasteChunk(data: string, start: string, end: string): void {
+    if (data.includes(start)) {
+      this.capturingPaste = true;
+      this.imagePasteBuffer = "";
+      data = data.replace(start, "");
+    }
+
+    this.imagePasteBuffer += data;
+    const endIndex = this.imagePasteBuffer.indexOf(end);
+    if (endIndex === -1) return;
+
+    const pasted = this.imagePasteBuffer.slice(0, endIndex);
+    const remaining = this.imagePasteBuffer.slice(endIndex + end.length);
+    const rawPaste = `${start}${pasted}${end}`;
+    this.capturingPaste = false;
+    this.imagePasteBuffer = "";
+
+    void Promise.resolve(this.onPasteText?.(pasted) ?? false)
+      .catch(() => false)
+      .then((handled) => {
+        if (!handled) super.handleInput(rawPaste);
+        if (remaining) this.handleInput(remaining);
+      });
   }
 }
 
