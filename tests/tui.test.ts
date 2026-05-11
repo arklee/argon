@@ -6,10 +6,12 @@ import { describe, expect, it } from "vitest";
 import {
   InteractiveEventController,
   TUI_SLASH_COMMANDS,
+  createInteractiveRunOptions,
   rememberSubmittedPrompt,
   resolveSlashCommand,
   type InteractiveTuiView,
-  type MutableTuiMessage
+  type MutableTuiMessage,
+  type SlashCommandContext
 } from "../src/tui/app.js";
 import { renderToolResult, stripAnsi } from "../src/tui/events.js";
 import { parseTuiArgs } from "../src/tui/options.js";
@@ -18,17 +20,22 @@ import type { TurnContext } from "../src/types.js";
 describe("TUI options", () => {
   it("parses provider/model shortcuts and run controls", () => {
     const parsed = parseTuiArgs(
-      ["--model", "anthropic/claude-sonnet-4-5", "--reasoning", "high", "--once", "hi"],
+      ["--model", "anthropic/claude-sonnet-4-5", "--reasoning", "minimal", "--once", "hi"],
       { NO_COLOR: "1" }
     );
 
     expect(parsed.options).toMatchObject({
       provider: "anthropic",
       modelId: "claude-sonnet-4-5",
-      reasoning: "high",
+      reasoning: "minimal",
       once: "hi",
       color: false
     });
+  });
+
+  it("accepts off as a reasoning level", () => {
+    const parsed = parseTuiArgs(["--reasoning", "off"], {});
+    expect(parsed.options).toMatchObject({ reasoning: "off" });
   });
 
   it("does not expose max iterations as a TUI option", () => {
@@ -48,6 +55,11 @@ describe("TUI options", () => {
     expect(parsed.error).toContain("Missing value");
   });
 
+  it("rejects invalid reasoning levels", () => {
+    const parsed = parseTuiArgs(["--reasoning", "extreme"], {});
+    expect(parsed.error).toBe("Invalid --reasoning value: extreme");
+  });
+
   it("keeps slashful model ids when provider is explicit", () => {
     const parsed = parseTuiArgs(["--provider", "openrouter", "--model", "openai/gpt-5.2-codex"], {});
 
@@ -65,7 +77,7 @@ describe("TUI options", () => {
         provider: "anthropic",
         model: "claude-sonnet-4-5",
         baseUrl: "https://example.test/v1",
-        reasoning: "medium",
+        reasoning: "off",
         apiKey: "config-key",
         apiKeyEnv: "ANTHROPIC_API_KEY",
         eventLogPath: ".argon/events.jsonl"
@@ -79,7 +91,7 @@ describe("TUI options", () => {
       provider: "openai",
       modelId: "gpt-5.2-codex",
       baseUrl: "https://example.test/v1",
-      reasoning: "medium",
+      reasoning: "off",
       apiKey: "config-key",
       apiKeyEnv: "ANTHROPIC_API_KEY",
       eventLogPath: join(dir, ".argon/events.jsonl")
@@ -135,6 +147,12 @@ describe("TUI options", () => {
     });
     expect(fromCli.options).toMatchObject({ baseUrl: "https://cli.test/v1" });
   });
+
+  it("builds run options with complete thinking levels", () => {
+    expect(createInteractiveRunOptions({ reasoning: "off" } as any)).toEqual({ reasoning: "off" });
+    expect(createInteractiveRunOptions({ reasoning: "high" } as any)).toEqual({ reasoning: "high" });
+    expect(createInteractiveRunOptions({} as any)).toEqual({});
+  });
 });
 
 describe("TUI event rendering", () => {
@@ -153,11 +171,12 @@ describe("TUI event rendering", () => {
 });
 
 describe("Interactive TUI commands", () => {
-  const context = {
+  const context: SlashCommandContext = {
     provider: "openai",
     modelId: "gpt-5.2-codex",
     cwd: "/tmp/project",
     messageCount: 4,
+    thinkingLevel: "high",
     configPath: "/tmp/project/argon.config.json"
   };
 
@@ -173,6 +192,10 @@ describe("Interactive TUI commands", () => {
       message: expect.stringContaining("messages=4")
     });
     expect(resolveSlashCommand("/session", context)).toMatchObject({ handled: true, action: "message" });
+    expect(resolveSlashCommand("/model", context)).toMatchObject({ handled: true, action: "model" });
+    expect(resolveSlashCommand("/thinking", context)).toMatchObject({ handled: true, action: "thinking" });
+    expect(resolveSlashCommand("/reasoning", context)).toMatchObject({ handled: true, action: "thinking" });
+    expect(resolveSlashCommand("/login", context)).toMatchObject({ handled: true, action: "login" });
     expect(resolveSlashCommand("/resume", context)).toMatchObject({ handled: true, action: "resume" });
     expect(resolveSlashCommand("/tree", context)).toMatchObject({ handled: true, action: "tree" });
     expect(resolveSlashCommand("/clear", context)).toMatchObject({ handled: true, action: "clear" });
@@ -189,6 +212,10 @@ describe("Interactive TUI commands", () => {
     expect(TUI_SLASH_COMMANDS.map((command) => command.name)).toEqual([
       "help",
       "status",
+      "model",
+      "thinking",
+      "reasoning",
+      "login",
       "session",
       "resume",
       "tree",

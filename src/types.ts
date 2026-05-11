@@ -11,6 +11,7 @@ import type {
   UserMessage
 } from "@earendil-works/pi-ai";
 import type { SessionManager } from "./session/manager.js";
+import type { ArgonThinkingLevel } from "./thinking.js";
 
 export type AgentMessage = Message;
 
@@ -83,6 +84,12 @@ export interface ToolRuntime {
 
 export type ApiKeyResolver = string | ((provider: string) => string | Promise<string | undefined> | undefined);
 
+export type RequestAuthResolver = (
+  model: Model<any>
+) =>
+  | { apiKey?: string | undefined; headers?: Record<string, string> | undefined }
+  | Promise<{ apiKey?: string | undefined; headers?: Record<string, string> | undefined }>;
+
 export type StreamProvider = (
   model: Model<any>,
   context: Context,
@@ -119,7 +126,7 @@ export interface LoopStrategy {
 export interface RunOptions {
   maxIterations?: number | undefined;
   signal?: AbortSignal | undefined;
-  reasoning?: SimpleStreamOptions["reasoning"] | undefined;
+  reasoning?: ArgonThinkingLevel | undefined;
   sessionId?: string | undefined;
   strategy?: LoopStrategy | undefined;
   followUps?: UserInput[] | undefined;
@@ -129,6 +136,7 @@ export interface AgentRuntimeConfig {
   model: Model<any>;
   cwd: string;
   apiKey?: ApiKeyResolver | undefined;
+  requestAuth?: RequestAuthResolver | undefined;
   tools?: ToolRuntime[] | undefined;
   prompt?: PromptConfig | undefined;
   sessionId?: string | undefined;
@@ -145,6 +153,7 @@ export interface RunTurnParams {
   promptConfig?: PromptConfig | undefined;
   tools: ToolRuntime[];
   apiKey?: ApiKeyResolver | undefined;
+  requestAuth?: RequestAuthResolver | undefined;
   sessionId?: string | undefined;
   stream?: StreamProvider | undefined;
   options?: RunOptions | undefined;

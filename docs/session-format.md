@@ -22,7 +22,7 @@ model-visible `message` records.
 
 Record types:
 
-- `turn_context`: cwd, provider/model, reasoning, available tools, and turn start time.
+- `turn_context`: cwd, provider/model, reasoning (`off`, `minimal`, `low`, `medium`, `high`, or `xhigh`), available tools, and turn start time.
 - `message`: a pi-ai compatible `AgentMessage`.
 - `model_change`: provider/model selection for the branch.
 - `branch`: a tree navigation marker created by `/tree`.

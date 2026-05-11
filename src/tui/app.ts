@@ -1,6 +1,7 @@
 import {
   CombinedAutocompleteProvider,
   Editor,
+  Input,
   Loader,
   Markdown,
   ProcessTerminal,
@@ -10,19 +11,34 @@ import {
   type Component,
   type SlashCommand
 } from "@earendil-works/pi-tui";
+import type { Model, OAuthPrompt } from "@earendil-works/pi-ai";
+import { exec } from "node:child_process";
+import { saveDefaultModel, saveDefaultReasoning } from "../config/settings.js";
+import type { ModelRegistry } from "../model/registry.js";
 import { AgentRuntime } from "../runtime.js";
 import { SessionManager, type SessionInfo, type SessionTreeNode } from "../session/manager.js";
+import {
+  THINKING_LEVEL_DESCRIPTIONS,
+  clampArgonThinkingLevel,
+  currentThinkingLevel,
+  supportedThinkingLevels,
+  type ArgonThinkingLevel
+} from "../thinking.js";
 import type { AgentEvent, AgentMessage, RunOptions } from "../types.js";
 import { compactText, renderToolCall, renderToolResult } from "./events.js";
 import { createArgonTuiTheme, type ArgonTuiTheme } from "./theme.js";
 import type { TuiOptions } from "./options.js";
 import { PickerComponent, type SelectionItem } from "./selectors.js";
 
-const COMMAND_HELP = "Commands: /help, /status, /session, /resume, /tree, /clear, /exit";
+const COMMAND_HELP = "Commands: /help, /status, /model, /thinking, /reasoning, /login, /session, /resume, /tree, /clear, /exit";
 
 export const TUI_SLASH_COMMANDS: SlashCommand[] = [
   { name: "help", description: "Show available commands" },
   { name: "status", description: "Show model, cwd, and message count" },
+  { name: "model", description: "Select model" },
+  { name: "thinking", description: "Select thinking level" },
+  { name: "reasoning", description: "Select thinking level" },
+  { name: "login", description: "Configure provider authentication" },
   { name: "session", description: "Show current session details" },
   { name: "resume", description: "Resume a previous session" },
   { name: "tree", description: "Navigate the current session tree" },
@@ -37,13 +53,17 @@ export type SlashCommandResult =
   | { handled: true; action: "clear"; message: string }
   | { handled: true; action: "exit" }
   | { handled: true; action: "resume" }
-  | { handled: true; action: "tree" };
+  | { handled: true; action: "tree" }
+  | { handled: true; action: "model" }
+  | { handled: true; action: "thinking" }
+  | { handled: true; action: "login" };
 
 export interface SlashCommandContext {
   provider: string;
   modelId: string;
   cwd: string;
   messageCount: number;
+  thinkingLevel: ArgonThinkingLevel;
   sessionFile?: string | undefined;
   sessionId?: string | undefined;
   configPath?: string | undefined;
@@ -144,8 +164,8 @@ export class InteractiveEventController {
   }
 }
 
-export async function runInteractiveTui(runtime: AgentRuntime, options: TuiOptions): Promise<void> {
-  const app = new ArgonInteractiveTui(runtime, options);
+export async function runInteractiveTui(runtime: AgentRuntime, options: TuiOptions, modelRegistry: ModelRegistry): Promise<void> {
+  const app = new ArgonInteractiveTui(runtime, options, modelRegistry);
   await app.run();
 }
 
@@ -158,7 +178,7 @@ export function resolveSlashCommand(input: string, context: SlashCommandContext)
       return {
         handled: true,
         action: "message",
-        message: `model=${context.provider}/${context.modelId} cwd=${context.cwd} messages=${context.messageCount}${context.sessionId ? ` session=${context.sessionId}` : ""}${context.configPath ? ` config=${context.configPath}` : ""}`
+        message: `model=${context.provider}/${context.modelId} thinking=${context.thinkingLevel} cwd=${context.cwd} messages=${context.messageCount}${context.sessionId ? ` session=${context.sessionId}` : ""}${context.configPath ? ` config=${context.configPath}` : ""}`
       };
     case "/session":
       return {
@@ -172,6 +192,13 @@ export function resolveSlashCommand(input: string, context: SlashCommandContext)
       return { handled: true, action: "resume" };
     case "/tree":
       return { handled: true, action: "tree" };
+    case "/model":
+      return { handled: true, action: "model" };
+    case "/thinking":
+    case "/reasoning":
+      return { handled: true, action: "thinking" };
+    case "/login":
+      return { handled: true, action: "login" };
     case "/clear":
       return { handled: true, action: "clear", message: "Cleared chat messages." };
     case "/exit":
@@ -211,7 +238,8 @@ class ArgonInteractiveTui {
 
   constructor(
     private readonly runtime: AgentRuntime,
-    private readonly options: TuiOptions
+    private readonly options: TuiOptions,
+    private readonly modelRegistry: ModelRegistry
   ) {
     this.theme = createArgonTuiTheme(options.color && Boolean(process.stdout.isTTY));
     this.editor = new Editor(this.tui, this.theme.editor, { paddingX: 0, autocompleteMaxVisible: 8 });
@@ -265,11 +293,13 @@ class ArgonInteractiveTui {
     if (!trimmed) return;
 
     const activeSession = this.runtime.getSession();
+    const activeModel = this.runtime.getModel();
     const command = resolveSlashCommand(trimmed, {
-      provider: this.options.provider,
-      modelId: this.options.modelId,
+      provider: activeModel.provider,
+      modelId: activeModel.id,
       cwd: this.options.cwd,
       messageCount: this.runtime.messages().length,
+      thinkingLevel: currentThinkingLevel(this.options.reasoning),
       ...(activeSession ? { sessionFile: activeSession.getSessionFile(), sessionId: activeSession.getSessionId() } : {}),
       ...(this.options.configPath ? { configPath: this.options.configPath } : {})
     });
@@ -284,6 +314,12 @@ class ArgonInteractiveTui {
         await this.handleResumeCommand();
       } else if (command.action === "tree") {
         await this.handleTreeCommand();
+      } else if (command.action === "model") {
+        await this.handleModelCommand();
+      } else if (command.action === "thinking") {
+        await this.handleThinkingCommand();
+      } else if (command.action === "login") {
+        await this.handleLoginCommand();
       } else {
         this.view.addStatusMessage(this.theme.ansi.dim(command.message));
       }
@@ -359,6 +395,132 @@ class ArgonInteractiveTui {
     }
   }
 
+  private async handleModelCommand(): Promise<void> {
+    this.modelRegistry.refresh();
+    if (this.modelRegistry.getError()) {
+      this.view.addStatusMessage(`warning ${this.modelRegistry.getError()}`);
+    }
+
+    const models = this.modelRegistry.getAvailable();
+    if (models.length === 0) {
+      this.view.addStatusMessage(this.theme.ansi.dim("No authenticated models. Use /login first."));
+      return;
+    }
+
+    const selected = await this.pick("Select Model", modelItems(models, this.modelRegistry));
+    if (!selected) {
+      this.view.addStatusMessage(this.theme.ansi.dim("Model selection cancelled."));
+      return;
+    }
+
+    const slash = selected.indexOf("/");
+    const provider = selected.slice(0, slash);
+    const modelId = selected.slice(slash + 1);
+    const model = this.modelRegistry.find(provider, modelId);
+    if (!model) {
+      this.view.addStatusMessage(`error Unknown model: ${selected}`);
+      return;
+    }
+
+    try {
+      this.runtime.switchModel(model);
+      this.options.provider = model.provider;
+      this.options.modelId = model.id;
+      const previousThinking = currentThinkingLevel(this.options.reasoning);
+      const clampedThinking = clampArgonThinkingLevel(model, previousThinking);
+      if (clampedThinking !== previousThinking) {
+        this.options.reasoning = clampedThinking;
+        saveDefaultReasoning(clampedThinking);
+      }
+      saveDefaultModel(model.provider, model.id);
+      const thinkingNote = clampedThinking !== previousThinking ? ` thinking=${clampedThinking}` : "";
+      this.view.addStatusMessage(this.theme.ansi.dim(`Selected ${model.provider}/${model.id}${thinkingNote}. Saved as default.`));
+      this.view.setRunning(false);
+    } catch (error) {
+      this.view.addStatusMessage(`error ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleThinkingCommand(): Promise<void> {
+    const model = this.runtime.getModel();
+    const current = currentThinkingLevel(this.options.reasoning);
+    const levels = supportedThinkingLevels(model);
+    const selected = await this.pick("Select Thinking Level", thinkingItems(levels, current));
+    if (!selected) {
+      this.view.addStatusMessage(this.theme.ansi.dim("Thinking level selection cancelled."));
+      return;
+    }
+
+    const reasoning = selected as ArgonThinkingLevel;
+    this.options.reasoning = reasoning;
+    saveDefaultReasoning(reasoning);
+    this.view.addStatusMessage(this.theme.ansi.dim(`Selected thinking=${reasoning}. Saved as default.`));
+  }
+
+  private async handleLoginCommand(): Promise<void> {
+    const authType = await this.pick("Authentication Method", [
+      { value: "oauth", label: "Use a subscription", description: "Open browser OAuth login for supported providers." },
+      { value: "api_key", label: "Use an API key", description: "Store a provider API key in auth.json." }
+    ]);
+    if (authType === "oauth") {
+      await this.handleOAuthLogin();
+    } else if (authType === "api_key") {
+      await this.handleApiKeyLogin();
+    }
+  }
+
+  private async handleOAuthLogin(): Promise<void> {
+    const providers = this.modelRegistry.authStorage.getOAuthProviders();
+    const selected = await this.pick(
+      "Subscription Provider",
+      providers.map((provider) => ({ value: provider.id, label: provider.name, description: provider.id }))
+    );
+    if (!selected) return;
+
+    const provider = providers.find((candidate) => candidate.id === selected);
+    try {
+      await this.modelRegistry.authStorage.login(selected, {
+        onAuth: (info) => {
+          this.view.addStatusMessage(this.theme.ansi.dim(`Open this URL to login: ${info.url}`));
+          if (info.instructions) this.view.addStatusMessage(this.theme.ansi.dim(info.instructions));
+          openExternal(info.url);
+        },
+        onPrompt: (prompt: OAuthPrompt) => this.promptText(prompt.message, prompt.placeholder),
+        onProgress: (message) => this.view.addStatusMessage(this.theme.ansi.dim(message))
+      });
+      this.modelRegistry.refresh();
+      this.view.addStatusMessage(this.theme.ansi.dim(`Logged in to ${provider?.name ?? selected}.`));
+    } catch (error) {
+      this.view.addStatusMessage(`error ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleApiKeyLogin(): Promise<void> {
+    const oauthProviderIds = new Set(this.modelRegistry.authStorage.getOAuthProviders().map((provider) => provider.id));
+    const providers = Array.from(new Set(this.modelRegistry.getAll().map((model) => model.provider)))
+      .filter((provider) => provider !== "openai-codex" && provider !== "github-copilot")
+      .sort();
+    const selected = await this.pick(
+      "API Key Provider",
+      providers.map((provider) => ({
+        value: provider,
+        label: this.modelRegistry.getProviderDisplayName(provider),
+        description: oauthProviderIds.has(provider) ? `${provider} (also supports subscription)` : provider
+      }))
+    );
+    if (!selected) return;
+
+    try {
+      const key = (await this.promptText(`Enter API key for ${selected}:`)).trim();
+      if (!key) throw new Error("API key cannot be empty");
+      this.modelRegistry.authStorage.set(selected, { type: "api_key", key });
+      this.modelRegistry.refresh();
+      this.view.addStatusMessage(this.theme.ansi.dim(`Saved API key for ${selected}.`));
+    } catch (error) {
+      this.view.addStatusMessage(`error ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   private async pick(title: string, items: SelectionItem[]): Promise<string | undefined> {
     return new Promise((resolve) => {
       const picker = new PickerComponent(title, items, this.theme.editor.selectList, (value) => {
@@ -367,6 +529,32 @@ class ArgonInteractiveTui {
         resolve(value);
       });
       const handle = this.tui.showOverlay(picker, {
+        anchor: "center",
+        width: "90%",
+        margin: 1
+      });
+      handle.focus();
+      this.view.requestRender();
+    });
+  }
+
+  private async promptText(prompt: string, placeholder?: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const input = new TextInputComponent(
+        prompt,
+        placeholder,
+        (value) => {
+          handle.hide();
+          this.tui.setFocus(this.editor);
+          resolve(value);
+        },
+        () => {
+          handle.hide();
+          this.tui.setFocus(this.editor);
+          reject(new Error("Input cancelled"));
+        }
+      );
+      const handle = this.tui.showOverlay(input, {
         anchor: "center",
         width: "90%",
         margin: 1
@@ -385,6 +573,37 @@ class ArgonInteractiveTui {
     await this.terminal.drainInput(250, 20);
     this.tui.stop();
     this.resolveRun?.();
+  }
+}
+
+class TextInputComponent implements Component {
+  private readonly input = new Input();
+
+  constructor(
+    private readonly prompt: string,
+    placeholder: string | undefined,
+    private readonly onDone: (value: string) => void,
+    private readonly onCancel: () => void
+  ) {
+    if (placeholder) this.input.setValue(placeholder);
+    this.input.onSubmit = () => this.onDone(this.input.getValue());
+    this.input.onEscape = () => this.onCancel();
+  }
+
+  render(width: number): string[] {
+    return [
+      ...new Text(this.prompt, 0, 0).render(width),
+      ...this.input.render(width),
+      ...new Text("enter to submit, esc to cancel", 0, 0).render(width)
+    ];
+  }
+
+  handleInput(data: string): void {
+    this.input.handleInput(data);
+  }
+
+  invalidate(): void {
+    this.input.invalidate();
   }
 }
 
@@ -535,6 +754,29 @@ function treeItems(rows: SessionTreeNode[]): SelectionItem[] {
     label: `${row.current ? "*" : " "} ${"  ".repeat(row.depth)}${row.entry.type}`,
     description: compactText(row.preview, 100)
   }));
+}
+
+function modelItems(models: Model<any>[], registry: ModelRegistry): SelectionItem[] {
+  return models
+    .map((model) => ({
+      value: `${model.provider}/${model.id}`,
+      label: model.id,
+      description: `${registry.getProviderDisplayName(model.provider)}  ${model.contextWindow ?? "?"} ctx`
+    }))
+    .sort((a, b) => `${a.description} ${a.label}`.localeCompare(`${b.description} ${b.label}`));
+}
+
+function thinkingItems(levels: ArgonThinkingLevel[], current: ArgonThinkingLevel): SelectionItem[] {
+  return levels.map((level) => ({
+    value: level,
+    label: level === current ? `${level} (current)` : level,
+    description: THINKING_LEVEL_DESCRIPTIONS[level]
+  }));
+}
+
+function openExternal(url: string): void {
+  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  exec(`${command} "${url.replace(/"/g, '\\"')}"`, () => {});
 }
 
 function messageText(message: AgentMessage): string {

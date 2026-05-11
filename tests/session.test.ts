@@ -10,7 +10,8 @@ import {
   loadSessionRecords,
   parseSessionRecords,
   resolveSessionPath,
-  type AgentMessage
+  type AgentMessage,
+  type TurnContext
 } from "../src/index.js";
 
 async function tempDir(prefix = "argon-session"): Promise<string> {
@@ -40,6 +41,18 @@ function assistantMessage(text: string): AgentMessage {
     },
     stopReason: "stop",
     timestamp: Date.now()
+  };
+}
+
+function turnContext(cwd: string): TurnContext {
+  return {
+    turnId: "turn-test",
+    cwd,
+    model: { provider: "openai", id: "gpt-test" } as TurnContext["model"],
+    systemPrompt: "",
+    startedAt: Date.now(),
+    availableTools: [],
+    messageCount: 0
   };
 }
 
@@ -73,6 +86,19 @@ describe("SessionManager", () => {
     expect(reopened.buildContext().messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(reopened.buildContext().model).toEqual({ provider: "openai", modelId: "gpt-test" });
     expect(await readFile(session.getSessionFile(), "utf8")).toContain('"type":"message"');
+  });
+
+  it("records and restores explicit off thinking level", async () => {
+    const cwd = await tempDir();
+    const sessionDir = join(cwd, ".sessions");
+    const session = SessionManager.create(cwd, sessionDir);
+
+    session.appendTurnContext(turnContext(cwd), "off");
+    session.appendMessage(userMessage("hello"));
+
+    const reopened = SessionManager.open(session.getSessionFile(), sessionDir);
+    expect(reopened.buildContext().reasoning).toBe("off");
+    expect(await readFile(session.getSessionFile(), "utf8")).toContain('"reasoning":"off"');
   });
 
   it("does not materialize a file until the first entry is appended", async () => {

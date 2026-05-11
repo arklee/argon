@@ -44,6 +44,7 @@ export class AgentRuntime {
         promptConfig: this.config.prompt,
         tools: this.tools,
         apiKey: this.config.apiKey,
+        requestAuth: this.config.requestAuth,
         sessionId: this.config.sessionId,
         stream: this.config.stream,
         options: runOptions
@@ -63,6 +64,17 @@ export class AgentRuntime {
 
   getSession(): SessionManager | undefined {
     return this.session;
+  }
+
+  getModel(): AgentRuntimeConfig["model"] {
+    return this.config.model;
+  }
+
+  switchModel(model: AgentRuntimeConfig["model"]): void {
+    if (this.activeAbortController) {
+      throw new Error("Cannot switch model while Argon is running");
+    }
+    this.config.model = model;
   }
 
   switchSession(session: SessionManager): void {

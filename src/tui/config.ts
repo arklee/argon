@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { isThinkingLevel, type ArgonThinkingLevel } from "../thinking.js";
 
 export const DEFAULT_CONFIG_FILES = ["argon.config.json", ".argon/settings.json", ".argon/model.json"] as const;
 
@@ -16,7 +16,7 @@ export interface TuiConfig {
   apiKeyEnv?: string;
   eventLogPath?: string;
   sessionId?: string;
-  reasoning?: SimpleStreamOptions["reasoning"];
+  reasoning?: ArgonThinkingLevel;
 }
 
 export interface LoadedTuiConfig {
@@ -100,8 +100,8 @@ function normalizeConfig(value: unknown, baseDir: string): TuiConfig {
 
   const reasoning = optionalString(value, "reasoning");
   if (reasoning !== undefined) {
-    if (!isReasoningLevel(reasoning)) {
-      throw new Error("reasoning must be one of: low, medium, high, xhigh");
+    if (!isThinkingLevel(reasoning)) {
+      throw new Error("reasoning must be one of: off, minimal, low, medium, high, xhigh");
     }
     config.reasoning = reasoning;
   }
@@ -133,8 +133,4 @@ function resolvePath(baseDir: string, value: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isReasoningLevel(value: string): value is NonNullable<SimpleStreamOptions["reasoning"]> {
-  return value === "low" || value === "medium" || value === "high" || value === "xhigh";
 }

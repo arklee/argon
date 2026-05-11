@@ -55,6 +55,72 @@ describe("AgentRuntime loop", () => {
     expect(runtime.messages().map((message) => message.role)).toEqual(["user", "assistant"]);
   });
 
+  it("switches the runtime model for the next turn", async () => {
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([fauxAssistantMessage("hello")]);
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd: await tempDir(),
+      tools: [],
+      apiKey: "test"
+    });
+    const nextModel = { ...faux.getModel(), id: "next-model" };
+
+    runtime.switchModel(nextModel);
+    const events = await collect(runtime.run("hi"));
+
+    expect(runtime.getModel().id).toBe("next-model");
+    expect(events.find((event) => event.type === "turn_start")).toMatchObject({
+      type: "turn_start",
+      context: { model: { id: "next-model" } }
+    });
+  });
+
+  it("does not pass off thinking to the provider stream", async () => {
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    const streamOptions: Array<{ reasoning: string | undefined }> = [];
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd: await tempDir(),
+      tools: [],
+      apiKey: "test",
+      stream: (_model, _context, options) => {
+        streamOptions.push({ reasoning: options?.reasoning });
+        const message = fauxAssistantMessage("hello");
+        return (async function* () {
+          yield { type: "start", partial: message };
+          yield { type: "done", reason: "stop", message };
+        })() as any;
+      }
+    });
+
+    await collect(runtime.run("hi", { reasoning: "off" }));
+    expect(streamOptions).toEqual([{ reasoning: undefined }]);
+  });
+
+  it("passes enabled thinking levels to the provider stream", async () => {
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    const streamOptions: Array<{ reasoning: string | undefined }> = [];
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd: await tempDir(),
+      tools: [],
+      apiKey: "test",
+      stream: (_model, _context, options) => {
+        streamOptions.push({ reasoning: options?.reasoning });
+        const message = fauxAssistantMessage("hello");
+        return (async function* () {
+          yield { type: "start", partial: message };
+          yield { type: "done", reason: "stop", message };
+        })() as any;
+      }
+    });
+
+    await collect(runtime.run("hi", { reasoning: "minimal" }));
+    expect(streamOptions).toEqual([{ reasoning: "minimal" }]);
+  });
+
   it("persists a new session and resumes previous messages", async () => {
     const cwd = await tempDir();
     const sessionDir = join(cwd, ".sessions");

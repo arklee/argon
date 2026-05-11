@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
-import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { loadUserSettings } from "../config/settings.js";
+import { isThinkingLevel, type ArgonThinkingLevel } from "../thinking.js";
 import { loadTuiConfig, type TuiConfig } from "./config.js";
 
 const DEFAULT_PROVIDER = "openai";
@@ -22,7 +23,7 @@ export interface TuiOptions {
   apiKeyEnv?: string;
   eventLogPath?: string;
   sessionId?: string;
-  reasoning?: SimpleStreamOptions["reasoning"];
+  reasoning?: ArgonThinkingLevel;
 }
 
 export interface ParsedTuiOptions {
@@ -31,7 +32,11 @@ export interface ParsedTuiOptions {
   error?: string;
 }
 
-export function parseTuiArgs(args: string[], env: NodeJS.ProcessEnv = process.env): ParsedTuiOptions {
+export function parseTuiArgs(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  parseOptions: { loadUserSettings?: boolean } = { loadUserSettings: env === process.env }
+): ParsedTuiOptions {
   const prelude = readCliPrelude(args, env);
   if (prelude.error) return { error: prelude.error };
 
@@ -44,6 +49,9 @@ export function parseTuiArgs(args: string[], env: NodeJS.ProcessEnv = process.en
   };
 
   try {
+    if (parseOptions.loadUserSettings !== false) {
+      applyConfig(options, loadUserSettings());
+    }
     const loaded = loadTuiConfig(prelude.cwd, prelude.configPath);
     if (loaded) {
       applyConfig(options, loaded.config);
@@ -170,7 +178,7 @@ export function parseTuiArgs(args: string[], env: NodeJS.ProcessEnv = process.en
     if (arg === "--reasoning") {
       const value = readValue(args, ++index, arg);
       if ("error" in value) return value;
-      if (!isReasoningLevel(value.value)) {
+      if (!isThinkingLevel(value.value)) {
         return { error: `Invalid --reasoning value: ${value.value}` };
       }
       options.reasoning = value.value;
@@ -194,7 +202,7 @@ Options:
   -C, --cwd <path>               Workspace directory
       --api-key <key>            API key override; config apiKey and env lookup are fallback
       --api-key-env <name>       Read API key from this environment variable
-      --reasoning <level>        Reasoning level: low, medium, high, xhigh
+      --reasoning <level>        Reasoning level: off, minimal, low, medium, high, xhigh
       --event-log <path>         JSONL runtime event log path
       --session-id <id>          Provider session id
       --show-thinking            Print streamed thinking deltas
@@ -208,12 +216,13 @@ Options:
 
 Environment:
   ARGON_PROVIDER, ARGON_MODEL, ARGON_BASE_URL, ARGON_CWD, ARGON_SHOW_THINKING
+  http_proxy, https_proxy, all_proxy, no_proxy and uppercase variants
 
 Config:
   argon.config.json, .argon/settings.json, or .argon/model.json in cwd or a parent directory.
 
 Interactive commands:
-  /help, /status, /session, /resume, /tree, /clear, /exit
+  /help, /status, /model, /thinking, /reasoning, /login, /session, /resume, /tree, /clear, /exit
 `;
 }
 
@@ -278,8 +287,4 @@ function readValue(args: string[], index: number, flag: string): { value: string
     return { error: `Missing value for ${flag}` };
   }
   return { value };
-}
-
-function isReasoningLevel(value: string): value is NonNullable<SimpleStreamOptions["reasoning"]> {
-  return value === "low" || value === "medium" || value === "high" || value === "xhigh";
 }

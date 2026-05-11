@@ -2,12 +2,12 @@
 
 import {
   getEnvApiKey,
-  getModels,
-  getProviders,
   type Api,
-  type KnownProvider,
   type Model
 } from "@earendil-works/pi-ai";
+import { AuthStorage } from "../auth/storage.js";
+import { ModelRegistry } from "../model/registry.js";
+import { configureGlobalProxyFromEnv } from "../provider/proxy.js";
 import { AgentRuntime } from "../runtime.js";
 import { SessionManager } from "../session/manager.js";
 import type { AgentEvent, AgentRuntimeConfig } from "../types.js";
@@ -35,13 +35,18 @@ async function main(): Promise<void> {
   }
 
   const options = parsed.options;
+  configureGlobalProxyFromEnv();
+  const authStorage = AuthStorage.create();
+  if (options.apiKey) authStorage.setRuntimeApiKey(options.provider, options.apiKey);
+  if (options.apiKeyEnv && process.env[options.apiKeyEnv]) authStorage.setRuntimeApiKey(options.provider, process.env[options.apiKeyEnv]!);
+  const modelRegistry = ModelRegistry.create(authStorage);
   const session = await createSessionManager(options);
-  const model = resolveModel(options);
+  const model = resolveModel(options, modelRegistry);
   const renderer = new TuiEventRenderer({
     color: options.color && Boolean(process.stdout.isTTY),
     showThinking: options.showThinking
   });
-  const runtime = createRuntime(options, model, session);
+  const runtime = createRuntime(options, model, session, modelRegistry);
   const state: RunState = {
     running: false,
     abort: () => runtime.abort()
@@ -59,7 +64,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  await runInteractiveTui(runtime, options);
+  await runInteractiveTui(runtime, options, modelRegistry);
 }
 
 async function createSessionManager(options: TuiOptions): Promise<SessionManager | undefined> {
@@ -88,11 +93,21 @@ async function createSessionManager(options: TuiOptions): Promise<SessionManager
   return SessionManager.create(options.cwd);
 }
 
-function createRuntime(options: TuiOptions, model: Model<Api>, session: SessionManager | undefined): AgentRuntime {
+function createRuntime(
+  options: TuiOptions,
+  model: Model<Api>,
+  session: SessionManager | undefined,
+  modelRegistry: ModelRegistry
+): AgentRuntime {
   const config: AgentRuntimeConfig = {
     model,
     cwd: options.cwd,
-    apiKey: options.apiKey ?? ((provider) => resolveApiKey(provider, options)),
+    apiKey: (provider) => resolveApiKey(provider, options),
+    requestAuth: async (candidate) => {
+      const auth = await modelRegistry.getApiKeyAndHeaders(candidate);
+      if (!auth.ok) throw new Error(auth.error);
+      return auth;
+    },
     ...(options.eventLogPath ? { eventLogPath: options.eventLogPath } : {}),
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     ...(session ? { session } : {})
@@ -131,15 +146,10 @@ async function runPrompt(
   return exitCode;
 }
 
-function resolveModel(options: TuiOptions): Model<Api> {
+function resolveModel(options: TuiOptions, modelRegistry: ModelRegistry): Model<Api> {
   const providerId = options.provider;
   const modelId = options.modelId;
-  const provider = getProviders().find((candidate) => candidate === providerId);
-  if (!provider) {
-    throw new Error(`Unknown provider: ${providerId}`);
-  }
-
-  const model = getModels(provider as KnownProvider).find((candidate) => candidate.id === modelId);
+  const model = modelRegistry.find(providerId, modelId);
   if (!model) {
     throw new Error(`Unknown model for ${providerId}: ${modelId}`);
   }

@@ -126,9 +126,10 @@ async function* streamAssistantMessage(
         tools: params.tools.map((tool) => tool.definition)
       },
       apiKey: params.apiKey,
+      requestAuth: params.requestAuth,
       stream: params.stream,
       signal: params.options?.signal,
-      reasoning: params.options?.reasoning,
+      ...(params.options?.reasoning !== undefined ? { reasoning: params.options.reasoning } : {}),
       sessionId: params.options?.sessionId ?? params.sessionId
     });
 
