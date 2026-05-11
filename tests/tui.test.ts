@@ -473,6 +473,34 @@ describe("Interactive TUI event controller", () => {
 });
 
 describe("Interactive TUI layout", () => {
+  it("renders submitted user prompts as input boxes and omits you/assistant labels", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal);
+    const theme = createArgonTuiTheme(false);
+    const editor = new Editor(tui, theme.editor);
+    const view = new PiTuiConversationView(tui, editor, theme, {
+      provider: "faux",
+      modelId: "faux",
+      cwd: "/tmp/project",
+      color: false
+    } as any);
+
+    view.addUserMessage("hello");
+    view.addAssistantMessage().append("hi there");
+
+    const editorIndex = tui.children.indexOf(editor);
+    const renderedUser = stripAnsi(tui.children[editorIndex - 2]!.render(40).join("\n"));
+    const renderedAssistant = stripAnsi(tui.children[editorIndex - 1]!.render(40).join("\n"));
+
+    expect(renderedUser).toContain("╭");
+    expect(renderedUser).toContain("❯ hello");
+    expect(renderedUser).not.toContain("you");
+    expect(renderedAssistant).toContain("hi there");
+    expect(renderedAssistant).not.toContain("assistant");
+
+    view.dispose();
+  });
+
   it("keeps the turn status directly above the editor when messages are added", () => {
     const terminal = new FakeTerminal();
     const tui = new TUI(terminal);
