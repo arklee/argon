@@ -14,8 +14,21 @@ import {
   type SlashCommandContext
 } from "../src/tui/app.js";
 import { renderToolResult, stripAnsi } from "../src/tui/events.js";
+import {
+  currentModelSupportsImages,
+  maybeCreateAttachmentFromPastedPath,
+  normalizePastedPath,
+  pasteClipboardImageToTempFile,
+  prepareImageInput,
+  retainReferencedAttachments
+} from "../src/tui/image-paste.js";
 import { parseTuiArgs } from "../src/tui/options.js";
 import type { TurnContext } from "../src/types.js";
+
+const PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+  "base64"
+);
 
 describe("TUI options", () => {
   it("parses provider/model shortcuts and run controls", () => {
@@ -223,6 +236,58 @@ describe("Interactive TUI commands", () => {
       "exit",
       "quit"
     ]);
+  });
+});
+
+describe("Interactive TUI image paste", () => {
+  it("normalizes pasted image paths and creates placeholders", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "argon-image-path-"));
+    const imagePath = join(dir, "screen shot.png");
+    await writeFile(imagePath, PNG_1X1);
+
+    expect(normalizePastedPath(`"${imagePath}"`)).toBe(imagePath);
+    expect(normalizePastedPath(`file://${imagePath.replaceAll(" ", "%20")}`)).toBe(imagePath);
+
+    const attachment = await maybeCreateAttachmentFromPastedPath(`"${imagePath}"`, []);
+    expect(attachment).toEqual({ placeholder: "[Image #1]", path: imagePath });
+  });
+
+  it("writes clipboard images to temp files with numbered placeholders", async () => {
+    const attachment = await pasteClipboardImageToTempFile([{ placeholder: "[Image #1]", path: "/tmp/one.png" }], {
+      hasImage: () => true,
+      getImageBinary: async () => PNG_1X1
+    });
+
+    expect(attachment?.placeholder).toBe("[Image #2]");
+    expect(attachment?.path).toContain("argon-clipboard-");
+  });
+
+  it("prepares only referenced image attachments for provider input", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "argon-image-input-"));
+    const firstPath = join(dir, "one.png");
+    const secondPath = join(dir, "two.png");
+    await writeFile(firstPath, PNG_1X1);
+    await writeFile(secondPath, PNG_1X1);
+
+    const attachments = [
+      { placeholder: "[Image #1]", path: firstPath },
+      { placeholder: "[Image #2]", path: secondPath }
+    ];
+
+    expect(retainReferencedAttachments("describe [Image #2]", attachments)).toEqual([attachments[1]]);
+
+    const prepared = await prepareImageInput("describe [Image #2]", attachments);
+    expect(prepared.attachments).toEqual([attachments[1]]);
+    expect(prepared.content).toEqual([
+      { type: "text", text: "describe [Image #2]" },
+      { type: "image", mimeType: "image/png", data: PNG_1X1.toString("base64") }
+    ]);
+  });
+
+  it("gates image paste on model input modalities", () => {
+    expect(currentModelSupportsImages({ input: ["text", "image"] } as any)).toBe(true);
+    expect(currentModelSupportsImages({ input: ["text"] } as any)).toBe(false);
+    expect(currentModelSupportsImages({} as any)).toBe(true);
   });
 });
 

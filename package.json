@@ -23,6 +23,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "^0.74.0",
     "@earendil-works/pi-tui": "^0.74.0",
+    "@mariozechner/clipboard": "^0.3.5",
     "proper-lockfile": "^4.1.2",
     "undici": "^7.25.0"
   },
