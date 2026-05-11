@@ -22,6 +22,7 @@ export type UserInput =
     };
 
 export type ContinueReason = "tool_results" | "follow_up" | "strategy";
+export type IterationStartReason = "initial" | "tool_results" | "follow_up";
 
 export interface TurnContext {
   readonly turnId: string;
@@ -62,6 +63,7 @@ export type AgentEvent =
       aborted: boolean;
       willRetry: boolean;
     }
+  | { type: "iteration_start"; context: TurnContext; iteration: number; reason: IterationStartReason }
   | { type: "message_start"; message: AgentMessage }
   | {
       type: "message_delta";

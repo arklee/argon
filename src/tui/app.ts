@@ -8,10 +8,12 @@ import {
   Text,
   TUI,
   matchesKey,
+  truncateToWidth,
+  visibleWidth,
   type Component,
   type SlashCommand
 } from "@earendil-works/pi-tui";
-import type { Model, OAuthPrompt } from "@earendil-works/pi-ai";
+import type { Model, OAuthPrompt, ToolCall } from "@earendil-works/pi-ai";
 import { exec } from "node:child_process";
 import { saveDefaultModel, saveDefaultReasoning } from "../config/settings.js";
 import type { ModelRegistry } from "../model/registry.js";
@@ -24,8 +26,8 @@ import {
   supportedThinkingLevels,
   type ArgonThinkingLevel
 } from "../thinking.js";
-import type { AgentEvent, AgentMessage, RunOptions, UserInput } from "../types.js";
-import { compactText, renderToolCall, renderToolResult } from "./events.js";
+import type { AgentEvent, AgentMessage, RunOptions, TurnEndReason, UserInput } from "../types.js";
+import { compactText, renderAssistantDivider, renderToolResult, renderToolStatus } from "./events.js";
 import { createArgonTuiTheme, type ArgonTuiTheme } from "./theme.js";
 import type { TuiOptions } from "./options.js";
 import { PickerComponent, type SelectionItem } from "./selectors.js";
@@ -83,20 +85,28 @@ export interface MutableTuiMessage {
   append(delta: string): void;
 }
 
+export interface MutableStatusMessage {
+  setText(text: string): void;
+}
+
 export interface InteractiveTuiView {
   addUserMessage(text: string): void;
   addAssistantMessage(): MutableTuiMessage;
   addThinkingMessage(): MutableTuiMessage;
+  addAssistantDivider(): void;
   addStatusMessage(text: string): void;
+  addMutableStatusMessage(text: string): MutableStatusMessage;
   renderMessages?(messages: AgentMessage[]): void;
   clearMessages(): void;
   setRunning(running: boolean): void;
+  finishRun(reason: TurnEndReason): void;
   requestRender(): void;
 }
 
 export class InteractiveEventController {
   private currentAssistant: MutableTuiMessage | undefined;
   private currentThinking: MutableTuiMessage | undefined;
+  private readonly pendingToolStatuses = new Map<string, { toolCall: ToolCall; message: MutableStatusMessage }>();
 
   constructor(
     private readonly view: InteractiveTuiView,
@@ -106,6 +116,7 @@ export class InteractiveEventController {
   beginRun(prompt: string): void {
     this.currentAssistant = undefined;
     this.currentThinking = undefined;
+    this.pendingToolStatuses.clear();
     this.view.addUserMessage(prompt);
     this.view.setRunning(true);
   }
@@ -130,7 +141,7 @@ export class InteractiveEventController {
         );
         break;
       case "message_delta":
-        if (event.kind === "text") {
+        if (event.kind === "text" && event.delta.length > 0) {
           this.assistantMessage().append(event.delta);
         } else if (event.kind === "thinking" && this.options.showThinking) {
           this.thinkingMessage().append(event.delta);
@@ -144,15 +155,29 @@ export class InteractiveEventController {
         break;
       case "tool_call_end":
         this.closeStreamingBlocks();
-        this.view.addStatusMessage(renderToolCall(event.toolCall.name, event.toolCall.arguments, this.options.color));
+        this.pendingToolStatuses.set(event.toolCall.id, {
+          toolCall: event.toolCall,
+          message: this.view.addMutableStatusMessage(renderToolStatus(event.toolCall, undefined, this.options.color))
+        });
         break;
       case "tool_result":
         this.closeStreamingBlocks();
-        this.view.addStatusMessage(renderToolResult(event.result, this.options.color));
+        {
+          const pending = this.pendingToolStatuses.get(event.result.toolCallId);
+          if (pending) {
+            pending.message.setText(renderToolStatus(pending.toolCall, event.result, this.options.color));
+            this.pendingToolStatuses.delete(event.result.toolCallId);
+          } else {
+            this.view.addStatusMessage(renderToolStatus(event.toolCall, event.result, this.options.color));
+          }
+        }
+        break;
+      case "iteration_start":
         break;
       case "turn_end":
         this.closeStreamingBlocks();
-        this.view.setRunning(false);
+        this.pendingToolStatuses.clear();
+        this.view.finishRun(event.reason);
         if (event.reason !== "stop") {
           this.view.addStatusMessage(`  ${event.reason} after ${event.iterations} iteration(s)`);
         }
@@ -170,6 +195,7 @@ export class InteractiveEventController {
 
   private assistantMessage(): MutableTuiMessage {
     if (!this.currentAssistant) {
+      this.view.addAssistantDivider();
       this.currentAssistant = this.view.addAssistantMessage();
     }
     return this.currentAssistant;
@@ -273,7 +299,7 @@ class ArgonInteractiveTui {
     private readonly modelRegistry: ModelRegistry
   ) {
     this.theme = createArgonTuiTheme(options.color && Boolean(process.stdout.isTTY));
-    this.editor = new ImagePasteEditor(this.tui, this.theme.editor, { paddingX: 0, autocompleteMaxVisible: 8 });
+    this.editor = new ImagePasteEditor(this.tui, this.theme.editor, { paddingX: 1, autocompleteMaxVisible: 8 });
     this.view = new PiTuiConversationView(this.tui, this.editor, this.theme, options);
     this.controller = new InteractiveEventController(this.view, {
       color: options.color && Boolean(process.stdout.isTTY),
@@ -399,6 +425,7 @@ class ArgonInteractiveTui {
       }
       this.imageAttachments = [];
     } catch (error) {
+      this.view.finishRun("error");
       this.view.addStatusMessage(`error ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.running = false;
@@ -701,6 +728,23 @@ class ImagePasteEditor extends Editor {
   private imagePasteBuffer = "";
   private capturingPaste = false;
 
+  override render(width: number): string[] {
+    if (width <= 2) return super.render(width);
+
+    const innerWidth = Math.max(1, width - 2);
+    const editorLines = super.render(innerWidth);
+    const topRuleIndex = 0;
+    const bottomRuleIndex = findLastEditorRule(editorLines, innerWidth);
+    const contentLines = editorLines.filter((_, index) => index !== topRuleIndex && index !== bottomRuleIndex);
+    const body = contentLines.map((line) => padEditorLine(line, innerWidth));
+
+    return [
+      this.borderColor(`╭${"─".repeat(innerWidth)}╮`),
+      ...body.map((line) => `${this.borderColor("│")}${line}${this.borderColor("│")}`),
+      this.borderColor(`╰${"─".repeat(innerWidth)}╯`)
+    ];
+  }
+
   override handleInput(data: string): void {
     if (matchesKey(data, "ctrl+v") || matchesKey(data, "alt+v")) {
       this.onPasteImage?.();
@@ -743,6 +787,28 @@ class ImagePasteEditor extends Editor {
   }
 }
 
+function findLastEditorRule(lines: string[], width: number): number {
+  for (let index = lines.length - 1; index > 0; index--) {
+    if (isEditorRule(lines[index] ?? "", width)) return index;
+  }
+  return lines.length - 1;
+}
+
+function isEditorRule(line: string, width: number): boolean {
+  const plain = stripAnsi(line);
+  return visibleWidth(line) === width && (/^─+$/.test(plain) || /^─── [↑↓] \d+ more ─*$/.test(plain));
+}
+
+function padEditorLine(line: string, width: number): string {
+  const visible = visibleWidth(line);
+  if (visible > width) return truncateToWidth(line, width, "", true);
+  return `${line}${" ".repeat(width - visible)}`;
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
 class TextInputComponent implements Component {
   private readonly input = new Input();
 
@@ -774,11 +840,24 @@ class TextInputComponent implements Component {
   }
 }
 
-class PiTuiConversationView implements InteractiveTuiView {
+class AssistantDividerComponent implements Component {
+  constructor(private readonly color: boolean) {}
+
+  render(width: number): string[] {
+    return [renderAssistantDivider(width, this.color)];
+  }
+
+  invalidate(): void {}
+}
+
+export class PiTuiConversationView implements InteractiveTuiView {
   private readonly status: Text;
   private readonly hint: Text;
   private readonly messageComponents: Component[] = [];
-  private loader: Loader | undefined;
+  private turnStatus: Loader | undefined;
+  private turnStatusTimer: NodeJS.Timeout | undefined;
+  private turnStartedAt = 0;
+  private runFinished = true;
 
   constructor(
     private readonly tui: TUI,
@@ -799,31 +878,62 @@ class PiTuiConversationView implements InteractiveTuiView {
   }
 
   addUserMessage(text: string): void {
-    this.addMarkdown(`**you**\n\n${text}`);
+    this.addMarkdown(`${this.roleLabel("you")}\n\n${text}`);
   }
 
   addAssistantMessage(): MutableTuiMessage {
-    return this.addMutableMarkdown("**assistant**\n\n");
+    return this.addMutableMarkdown(`${this.roleLabel("assistant")}\n\n`);
   }
 
   addThinkingMessage(): MutableTuiMessage {
-    return this.addMutableMarkdown("**thinking**\n\n", { dim: true });
+    return this.addMutableMarkdown(`${this.roleLabel("thinking")}\n\n`, { dim: true });
+  }
+
+  addAssistantDivider(): void {
+    this.addComponent(new AssistantDividerComponent(this.options.color && Boolean(process.stdout.isTTY)));
   }
 
   addStatusMessage(text: string): void {
-    this.removeLoader();
     this.addComponent(new Text(text, 1, 0));
+  }
+
+  addMutableStatusMessage(text: string): MutableStatusMessage {
+    const component = new Text(text, 1, 0);
+    this.addComponent(component);
+    return {
+      setText: (next: string) => {
+        component.setText(next);
+        this.requestRender();
+      }
+    };
   }
 
   renderMessages(messages: AgentMessage[]): void {
     this.clearMessages();
+    const pendingToolStatuses = new Map<string, { toolCall: ToolCall; message: MutableStatusMessage }>();
     for (const message of messages) {
       if (message.role === "user") {
         this.addUserMessage(messageText(message));
       } else if (message.role === "assistant") {
-        this.addMarkdown(`**assistant**\n\n${messageText(message) || "_(no text)_"}`);
+        const text = messageText(message);
+        if (text) this.addMarkdown(`${this.roleLabel("assistant")}\n\n${text}`);
+        for (const toolCall of messageToolCalls(message)) {
+          pendingToolStatuses.set(
+            toolCall.id,
+            {
+              toolCall,
+              message: this.addMutableStatusMessage(renderToolStatus(toolCall, undefined, this.options.color && Boolean(process.stdout.isTTY)))
+            }
+          );
+        }
       } else if (message.role === "toolResult") {
-        this.addStatusMessage(renderToolResult(message, this.options.color && Boolean(process.stdout.isTTY)));
+        const pending = pendingToolStatuses.get(message.toolCallId);
+        if (pending) {
+          pending.message.setText(renderToolStatus(pending.toolCall, message, this.options.color && Boolean(process.stdout.isTTY)));
+          pendingToolStatuses.delete(message.toolCallId);
+        } else {
+          this.addStatusMessage(renderToolResult(message, this.options.color && Boolean(process.stdout.isTTY)));
+        }
       }
     }
   }
@@ -833,7 +943,7 @@ class PiTuiConversationView implements InteractiveTuiView {
       this.tui.removeChild(component);
     }
     this.messageComponents.length = 0;
-    this.removeLoader();
+    this.removeTurnStatus();
     this.tui.requestRender(true);
   }
 
@@ -841,10 +951,27 @@ class PiTuiConversationView implements InteractiveTuiView {
     this.editor.disableSubmit = running;
     this.status.setText(this.statusText(running));
     if (running) {
-      this.ensureLoader();
-    } else {
-      this.removeLoader();
+      this.turnStartedAt = Date.now();
+      this.runFinished = false;
+      this.ensureTurnStatus();
+      this.turnStatus?.setIndicator();
+      this.updateWorkingText();
+      this.startTurnStatusTimer();
+    } else if (!this.runFinished) {
+      this.finishRun("stop");
     }
+    this.requestRender();
+  }
+
+  finishRun(reason: TurnEndReason): void {
+    this.editor.disableSubmit = false;
+    this.status.setText(this.statusText(false));
+    this.runFinished = true;
+    this.stopTurnStatusTimer();
+    this.ensureTurnStatus();
+    this.turnStatus?.stop();
+    this.turnStatus?.setIndicator({ frames: [] });
+    this.turnStatus?.setMessage(this.finishText(reason));
     this.requestRender();
   }
 
@@ -853,20 +980,25 @@ class PiTuiConversationView implements InteractiveTuiView {
   }
 
   dispose(): void {
-    this.removeLoader();
+    this.removeTurnStatus();
   }
 
   private addMarkdown(text: string): Markdown {
-    const markdown = new Markdown(text, 1, 1, this.theme.markdown);
+    const markdown = new Markdown(text, 2, 0, this.theme.markdown);
     this.addComponent(markdown);
     return markdown;
   }
 
+  private roleLabel(role: "you" | "assistant" | "thinking"): string {
+    if (role === "you") return this.theme.ansi.cyan(role);
+    if (role === "assistant") return this.theme.ansi.green(role);
+    return this.theme.ansi.dim(role);
+  }
+
   private addMutableMarkdown(prefix: string, options: { dim?: boolean } = {}): MutableTuiMessage {
-    this.removeLoader();
     let content = "";
     const style = options.dim ? { color: this.theme.ansi.dim } : undefined;
-    const markdown = new Markdown(prefix, 1, 1, this.theme.markdown, style);
+    const markdown = new Markdown(prefix, 2, 0, this.theme.markdown, style);
     this.addComponent(markdown);
     return {
       append: (delta: string) => {
@@ -877,26 +1009,65 @@ class PiTuiConversationView implements InteractiveTuiView {
   }
 
   private addComponent(component: Component): void {
-    const editorIndex = this.tui.children.indexOf(this.editor);
-    const insertAt = editorIndex === -1 ? this.tui.children.length : editorIndex;
+    const insertAt = this.messageInsertIndex();
     this.tui.children.splice(insertAt, 0, component);
     this.messageComponents.push(component);
     this.requestRender();
   }
 
-  private ensureLoader(): void {
-    if (this.loader) return;
-    this.loader = new Loader(this.tui, this.theme.ansi.cyan, this.theme.ansi.dim, "Thinking...");
-    this.addComponent(this.loader);
+  private ensureTurnStatus(): void {
+    if (this.turnStatus) return;
+    this.turnStatus = new Loader(this.tui, this.theme.ansi.cyan, this.theme.ansi.dim, "Working...");
+    this.addBeforeEditor(this.turnStatus);
   }
 
-  private removeLoader(): void {
-    if (!this.loader) return;
-    this.loader.stop();
-    this.tui.removeChild(this.loader);
-    const index = this.messageComponents.indexOf(this.loader);
-    if (index !== -1) this.messageComponents.splice(index, 1);
-    this.loader = undefined;
+  private removeTurnStatus(): void {
+    this.stopTurnStatusTimer();
+    if (!this.turnStatus) return;
+    this.turnStatus.stop();
+    this.tui.removeChild(this.turnStatus);
+    this.turnStatus = undefined;
+  }
+
+  private addBeforeEditor(component: Component): void {
+    const editorIndex = this.tui.children.indexOf(this.editor);
+    const insertAt = editorIndex === -1 ? this.tui.children.length : editorIndex;
+    this.tui.children.splice(insertAt, 0, component);
+    this.requestRender();
+  }
+
+  private messageInsertIndex(): number {
+    if (this.turnStatus) {
+      const turnStatusIndex = this.tui.children.indexOf(this.turnStatus);
+      if (turnStatusIndex !== -1) return turnStatusIndex;
+    }
+    const editorIndex = this.tui.children.indexOf(this.editor);
+    return editorIndex === -1 ? this.tui.children.length : editorIndex;
+  }
+
+  private finishText(reason: TurnEndReason): string {
+    const elapsed = formatElapsedSeconds(Math.max(0, Math.floor((Date.now() - this.turnStartedAt) / 1000)));
+    if (reason === "stop") return `Worked for ${elapsed}`;
+    if (reason === "aborted") return `Interrupted after ${elapsed}`;
+    return `Failed after ${elapsed} (${reason})`;
+  }
+
+  private startTurnStatusTimer(): void {
+    this.stopTurnStatusTimer();
+    this.turnStatusTimer = setInterval(() => {
+      if (!this.runFinished) this.updateWorkingText();
+    }, 1000);
+  }
+
+  private stopTurnStatusTimer(): void {
+    if (!this.turnStatusTimer) return;
+    clearInterval(this.turnStatusTimer);
+    this.turnStatusTimer = undefined;
+  }
+
+  private updateWorkingText(): void {
+    const elapsed = formatElapsedSeconds(Math.max(0, Math.floor((Date.now() - this.turnStartedAt) / 1000)));
+    this.turnStatus?.setMessage(`Working (${elapsed} - Ctrl+C to interrupt)`);
   }
 
   private statusText(running: boolean): string {
@@ -954,4 +1125,20 @@ function messageText(message: AgentMessage): string {
     .filter((block): block is { type: "text"; text: string } => typeof block === "object" && block !== null && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string")
     .map((block) => block.text)
     .join("\n");
+}
+
+function messageToolCalls(message: AgentMessage): ToolCall[] {
+  const content = "content" in message ? message.content : undefined;
+  if (!Array.isArray(content)) return [];
+  return content.filter((block): block is ToolCall => typeof block === "object" && block !== null && "type" in block && block.type === "toolCall");
+}
+
+function formatElapsedSeconds(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${String(remainder).padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  const minuteRemainder = minutes % 60;
+  return `${hours}h ${String(minuteRemainder).padStart(2, "0")}m ${String(remainder).padStart(2, "0")}s`;
 }
