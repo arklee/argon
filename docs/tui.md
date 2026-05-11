@@ -1,5 +1,32 @@
 # Argon TUI
 
+## Turn Progress
+
+While a turn is running, the interactive TUI shows a live status row directly above the input box:
+
+```text
+Working (0s - Ctrl+C to interrupt)
+```
+
+When the turn ends, the same row becomes a static completion summary such as `Worked for 3s`,
+`Interrupted after 1s`, or `Failed after 2s (error)`.
+
+When the assistant streams ordinary text, Argon inserts a dim full-width divider immediately before
+that assistant text block. Tool-only model iterations do not render dividers.
+
+```text
+────────────────────────────────────────────────────────────────────────────────
+assistant
+```
+
+Tool calls render as one compact status entry. The entry starts in a pending state, such as
+`Calling read src/index.ts`, and is updated in place when the tool result arrives, such as
+`Called read src/index.ts hello world`. Large parameters like file contents and edit replacement
+texts are hidden from the compact status line.
+
+The assistant divider is driven by visible `message_delta` text events. It is UI telemetry only;
+it is not added to the model transcript or resumable session context.
+
 ## Image Paste
 
 The interactive TUI supports image attachments for models whose `input` modalities include

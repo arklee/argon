@@ -2,18 +2,21 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { Editor, TUI, type Terminal } from "@earendil-works/pi-tui";
 import {
   InteractiveEventController,
+  PiTuiConversationView,
   TUI_SLASH_COMMANDS,
   createInteractiveRunOptions,
   rememberSubmittedPrompt,
   resolveSlashCommand,
   type InteractiveTuiView,
+  type MutableStatusMessage,
   type MutableTuiMessage,
   type SlashCommandContext
 } from "../src/tui/app.js";
-import { renderToolResult, stripAnsi } from "../src/tui/events.js";
+import { renderAssistantDivider, renderToolStatus, stripAnsi } from "../src/tui/events.js";
 import {
   currentModelSupportsImages,
   maybeCreateAttachmentFromPastedPath,
@@ -23,6 +26,7 @@ import {
   retainReferencedAttachments
 } from "../src/tui/image-paste.js";
 import { parseTuiArgs } from "../src/tui/options.js";
+import { createArgonTuiTheme } from "../src/tui/theme.js";
 import type { TurnContext } from "../src/types.js";
 
 const PNG_1X1 = Buffer.from(
@@ -170,16 +174,31 @@ describe("TUI options", () => {
 
 describe("TUI event rendering", () => {
   it("renders compact tool result status", () => {
+    const toolCall = fakeToolCall("read", { path: "note.txt" });
     const result: ToolResultMessage = {
       role: "toolResult",
-      toolCallId: "call-read",
+      toolCallId: toolCall.id,
       toolName: "read",
       content: [{ type: "text", text: "hello\nworld" }],
       isError: false,
       timestamp: Date.now()
     };
 
-    expect(stripAnsi(renderToolResult(result, true))).toContain("done read hello world");
+    expect(stripAnsi(renderToolStatus(toolCall, result, true))).toContain("* Called read note.txt hello world");
+  });
+
+  it("renders concise tool call summaries without large json arguments", () => {
+    const writeCall = fakeToolCall("write", { path: "src/app.ts", content: "x".repeat(500) });
+    const editCall = fakeToolCall("edit", { path: "src/app.ts", oldText: "before", newText: "after" });
+    const grepCall = fakeToolCall("grep", { pattern: "AgentEvent", path: "src" });
+
+    expect(stripAnsi(renderToolStatus(writeCall, undefined, true))).toBe("  * Calling write src/app.ts");
+    expect(stripAnsi(renderToolStatus(editCall, undefined, true))).toBe("  * Calling edit src/app.ts");
+    expect(stripAnsi(renderToolStatus(grepCall, undefined, true))).toBe("  * Calling grep AgentEvent in src");
+  });
+
+  it("renders assistant dividers as full-width lines", () => {
+    expect(stripAnsi(renderAssistantDivider(12, true))).toBe("────────────");
   });
 });
 
@@ -353,9 +372,20 @@ describe("Interactive TUI event controller", () => {
     controller.render({ type: "tool_result", toolCall, result: fakeToolResult(toolCall, "hello\nworld", false) });
     controller.render({ type: "turn_end", context: fakeTurnContext(), reason: "max_iterations", iterations: 3 });
 
-    expect(view.statuses.join("\n")).toContain("tool read");
-    expect(view.statuses.join("\n")).toContain("done read hello world");
+    expect(view.statuses).toEqual(["  * Called read note.txt hello world", "  max_iterations after 3 iteration(s)"]);
     expect(view.statuses.join("\n")).toContain("max_iterations after 3 iteration(s)");
+    expect(view.finishedReasons).toEqual(["max_iterations"]);
+  });
+
+  it("does not render dividers for tool-only model iterations", () => {
+    const view = new FakeInteractiveView();
+    const controller = new InteractiveEventController(view, { color: false, showThinking: false });
+
+    controller.render({ type: "iteration_start", context: fakeTurnContext(), iteration: 2, reason: "tool_results" });
+    const toolCall = fakeToolCall("read", { path: "note.txt" });
+    controller.render({ type: "tool_call_end", contentIndex: 0, toolCall, partial: fakeAssistant() });
+
+    expect(view.components).toEqual(["status:  * Calling read note.txt"]);
   });
 
   it("keeps streamed tool calls between surrounding assistant text", () => {
@@ -372,6 +402,7 @@ describe("Interactive TUI event controller", () => {
       partial: fakeAssistant()
     });
     controller.render({ type: "tool_call_end", contentIndex: 1, toolCall, partial: fakeAssistant() });
+    controller.render({ type: "tool_result", toolCall, result: fakeToolResult(toolCall, "hello", false) });
     controller.render({
       type: "message_delta",
       role: "assistant",
@@ -382,7 +413,8 @@ describe("Interactive TUI event controller", () => {
     });
 
     expect(view.assistants.map((message) => message.text)).toEqual(["before ", "after"]);
-    expect(view.components).toEqual(["assistant:0", "status:  tool read {\"path\":\"note.txt\"}", "assistant:1"]);
+    expect(view.components).toEqual(["divider", "assistant:0", "status:  * Calling read note.txt", "divider", "assistant:1"]);
+    expect(view.statuses).toEqual(["  * Called read note.txt hello"]);
   });
 
   it("starts a fresh assistant component after message end", () => {
@@ -419,7 +451,7 @@ describe("Interactive TUI event controller", () => {
 
     expect(view.statuses.join("\n")).toContain("error network down");
     expect(view.statuses.join("\n")).toContain("aborted after 1 iteration(s)");
-    expect(view.runningStates).toEqual([false]);
+    expect(view.finishedReasons).toEqual(["aborted"]);
   });
 
   it("records submitted prompts in editor history", () => {
@@ -431,11 +463,62 @@ describe("Interactive TUI event controller", () => {
   });
 });
 
+describe("Interactive TUI layout", () => {
+  it("keeps the turn status directly above the editor when messages are added", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal);
+    const theme = createArgonTuiTheme(false);
+    const editor = new Editor(tui, theme.editor);
+    const view = new PiTuiConversationView(tui, editor, theme, {
+      provider: "faux",
+      modelId: "faux",
+      cwd: "/tmp/project",
+      color: false
+    } as any);
+
+    view.setRunning(true);
+    view.addStatusMessage("tool output");
+    view.addAssistantMessage().append("assistant text");
+
+    const editorIndex = tui.children.indexOf(editor);
+    expect(editorIndex).toBeGreaterThan(0);
+    const directlyAboveEditor = tui.children[editorIndex - 1]!;
+    const renderedTurnStatus = stripAnsi(directlyAboveEditor.render(100).join("\n"));
+    const renderedPrevious = stripAnsi(tui.children[editorIndex - 2]!.render(100).join("\n"));
+
+    expect(renderedTurnStatus).toContain("Working");
+    expect(renderedPrevious).toContain("assistant text");
+
+    view.finishRun("stop");
+    view.dispose();
+  });
+});
+
 class FakeMutableMessage implements MutableTuiMessage {
   text = "";
 
   append(delta: string): void {
     this.text += delta;
+  }
+}
+
+class FakeMutableStatus implements MutableStatusMessage {
+  constructor(
+    private readonly view: FakeInteractiveView,
+    text: string
+  ) {
+    this.setText(text);
+  }
+
+  setText(text: string): void {
+    const status = stripAnsi(text);
+    const index = this.view.statuses.indexOf(this.view.statusTextByComponent.get(this) ?? "");
+    if (index !== -1) {
+      this.view.statuses[index] = status;
+    } else {
+      this.view.statuses.push(status);
+    }
+    this.view.statusTextByComponent.set(this, status);
   }
 }
 
@@ -446,6 +529,8 @@ class FakeInteractiveView implements InteractiveTuiView {
   statuses: string[] = [];
   components: string[] = [];
   runningStates: boolean[] = [];
+  finishedReasons: string[] = [];
+  statusTextByComponent = new Map<FakeMutableStatus, string>();
   renderRequests = 0;
   clears = 0;
 
@@ -461,6 +546,10 @@ class FakeInteractiveView implements InteractiveTuiView {
     return message;
   }
 
+  addAssistantDivider(): void {
+    this.components.push("divider");
+  }
+
   addThinkingMessage(): MutableTuiMessage {
     const message = new FakeMutableMessage();
     this.thinking.push(message);
@@ -474,6 +563,12 @@ class FakeInteractiveView implements InteractiveTuiView {
     this.components.push(`status:${status}`);
   }
 
+  addMutableStatusMessage(text: string): MutableStatusMessage {
+    const status = new FakeMutableStatus(this, text);
+    this.components.push(`status:${this.statusTextByComponent.get(status)}`);
+    return status;
+  }
+
   clearMessages(): void {
     this.clears++;
     this.components.length = 0;
@@ -483,9 +578,32 @@ class FakeInteractiveView implements InteractiveTuiView {
     this.runningStates.push(running);
   }
 
+  finishRun(reason: string): void {
+    this.finishedReasons.push(reason);
+    this.runningStates.push(false);
+  }
+
   requestRender(): void {
     this.renderRequests++;
   }
+}
+
+class FakeTerminal implements Terminal {
+  columns = 120;
+  rows = 40;
+  kittyProtocolActive = false;
+  start = vi.fn();
+  stop = vi.fn();
+  drainInput = vi.fn(async () => {});
+  write = vi.fn();
+  moveBy = vi.fn();
+  hideCursor = vi.fn();
+  showCursor = vi.fn();
+  clearLine = vi.fn();
+  clearFromCursor = vi.fn();
+  clearScreen = vi.fn();
+  setTitle = vi.fn();
+  setProgress = vi.fn();
 }
 
 function fakeAssistant(): AssistantMessage {

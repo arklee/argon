@@ -5,6 +5,7 @@ import type {
   AgentEvent,
   AgentMessage,
   ContinueReason,
+  IterationStartReason,
   LoopState,
   RunTurnParams,
   ToolExecutionResult,
@@ -36,6 +37,7 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
   });
 
   let iterations = 0;
+  let nextIterationReason: IterationStartReason = "initial";
   const maxIterations = params.options?.maxIterations;
   const followUps = [...(params.options?.followUps ?? [])];
 
@@ -52,6 +54,8 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
     }
 
     iterations++;
+    yield { type: "iteration_start", context: turn, iteration: iterations, reason: nextIterationReason };
+    nextIterationReason = "tool_results";
 
     const assistant = yield* streamAssistantMessage(params, turn);
     params.messages.push(assistant);
@@ -103,6 +107,7 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
       const message = params.messages[params.messages.length - 1]!;
       yield { type: "message_start", message };
       yield { type: "message_end", message };
+      nextIterationReason = "follow_up";
       continue;
     }
 

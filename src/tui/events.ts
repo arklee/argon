@@ -1,4 +1,4 @@
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AgentEvent } from "../types.js";
 
 export interface EventRendererOptions {
@@ -13,6 +13,7 @@ export class TuiEventRenderer {
   private readonly err: NodeJS.WriteStream;
   private readonly color: boolean;
   private readonly showThinking: boolean;
+  private readonly pendingToolCalls = new Map<string, ToolCall>();
   private assistantOpen = false;
   private thinkingOpen = false;
 
@@ -29,7 +30,7 @@ export class TuiEventRenderer {
         this.line(dim(`\nargon`, this.color) + dim(` ${event.context.model.provider}/${event.context.model.id}`, this.color));
         break;
       case "message_delta":
-        if (event.kind === "text") {
+        if (event.kind === "text" && event.delta.length > 0) {
           this.openAssistant();
           this.out.write(event.delta);
         } else if (event.kind === "thinking" && this.showThinking) {
@@ -44,10 +45,13 @@ export class TuiEventRenderer {
         break;
       case "tool_call_end":
         this.closeStreamingBlocks();
-        this.line(`  ${cyan("tool", this.color)} ${event.toolCall.name} ${dim(formatArgs(event.toolCall.arguments), this.color)}`);
+        this.pendingToolCalls.set(event.toolCall.id, event.toolCall);
         break;
       case "tool_result":
-        this.line(renderToolResult(event.result, this.color));
+        this.line(renderToolStatus(this.pendingToolCalls.get(event.result.toolCallId) ?? event.toolCall, event.result, this.color));
+        this.pendingToolCalls.delete(event.result.toolCallId);
+        break;
+      case "iteration_start":
         break;
       case "turn_end":
         this.closeStreamingBlocks();
@@ -72,6 +76,7 @@ export class TuiEventRenderer {
   private openAssistant(): void {
     if (this.assistantOpen) return;
     this.closeThinking();
+    this.line(renderAssistantDivider(this.outputWidth(), this.color));
     this.out.write(`${green("assistant", this.color)}\n`);
     this.assistantOpen = true;
   }
@@ -103,17 +108,33 @@ export class TuiEventRenderer {
   private line(text: string): void {
     this.out.write(`${text}\n`);
   }
+
+  private outputWidth(): number {
+    return typeof this.out.columns === "number" && this.out.columns > 0 ? this.out.columns : 80;
+  }
 }
 
 export function renderToolResult(result: ToolResultMessage, color: boolean): string {
-  const label = result.isError ? red("failed", color) : green("done", color);
-  const text = firstText(result);
-  const preview = text ? ` ${dim(compact(text), color)}` : "";
-  return `  ${label} ${result.toolName}${preview}`;
+  const call: ToolCall = { type: "toolCall", id: result.toolCallId, name: result.toolName, arguments: {} };
+  return renderToolStatus(call, result, color);
 }
 
 export function renderToolCall(name: string, args: Record<string, unknown>, color: boolean): string {
-  return `  ${cyan("tool", color)} ${name} ${dim(formatArgs(args), color)}`;
+  const call: ToolCall = { type: "toolCall", id: `pending-${name}`, name, arguments: args };
+  return renderToolStatus(call, undefined, color);
+}
+
+export function renderToolStatus(toolCall: ToolCall, result: ToolResultMessage | undefined, color: boolean): string {
+  const status = toolStatus(toolCall.name, result);
+  const label = result?.isError ? red(status, color) : result ? green(status, color) : cyan(status, color);
+  const summary = summarizeToolCall(toolCall);
+  const output = result ? summarizeToolResult(result) : "";
+  const outputPreview = output ? ` ${dim(output, color)}` : "";
+  return `  ${bullet(result, color)} ${label} ${summary}${outputPreview}`;
+}
+
+export function renderAssistantDivider(width: number, color: boolean): string {
+  return dim("─".repeat(Math.max(1, width)), color);
 }
 
 export function stripAnsi(text: string): string {
@@ -131,15 +152,95 @@ function firstText(result: ToolResultMessage): string {
   return block?.type === "text" ? block.text : "";
 }
 
-function compact(text: string): string {
-  return compactText(text, 140);
+function summarizeToolResult(result: ToolResultMessage): string {
+  const text = firstText(result);
+  if (!text) return "";
+  const processSummary = summarizeProcessResult(text);
+  return compactText(processSummary ?? text, 120);
 }
 
-function formatArgs(args: Record<string, unknown>): string {
-  const text = JSON.stringify(args);
-  if (!text) return "{}";
-  if (text.length <= 120) return text;
-  return `${text.slice(0, 117)}...`;
+function summarizeProcessResult(text: string): string | undefined {
+  const exit = text.match(/^Exit code: (.+)$/m)?.[1];
+  const timedOut = text.match(/^Timed out: (.+)$/m)?.[1];
+  const stderr = section(text, "Stderr:");
+  const stdout = section(text, "Stdout:");
+  if (!exit && !timedOut && !stderr && !stdout) return undefined;
+
+  const parts: string[] = [];
+  if (exit && exit !== "0") parts.push(`exit ${exit}`);
+  if (timedOut === "yes") parts.push("timed out");
+  const body = stderr || stdout;
+  if (body) parts.push(compactText(body, 90));
+  return parts.length > 0 ? parts.join(" | ") : "ok";
+}
+
+function section(text: string, header: string): string | undefined {
+  const start = text.indexOf(header);
+  if (start === -1) return undefined;
+  const after = text.slice(start + header.length).trim();
+  const nextHeader = after.search(/\n(?:Stdout|Stderr):\n/);
+  return (nextHeader === -1 ? after : after.slice(0, nextHeader)).trim();
+}
+
+function summarizeToolCall(toolCall: ToolCall): string {
+  const args = asRecord(toolCall.arguments);
+  switch (toolCall.name) {
+    case "bash":
+      return `${toolCall.name} ${quote(summaryValue(args.command) || "(empty)")}`;
+    case "read":
+    case "write":
+    case "edit":
+      return `${toolCall.name} ${summaryValue(args.path) || "(missing path)"}`;
+    case "ls":
+      return `${toolCall.name} ${summaryValue(args.path) || "."}`;
+    case "grep": {
+      const pattern = summaryValue(args.pattern) || "(missing pattern)";
+      const path = summaryValue(args.path);
+      return `${toolCall.name} ${quote(pattern)}${path ? ` in ${path}` : ""}`;
+    }
+    default: {
+      const formatted = formatCompactArgs(args);
+      return formatted ? `${toolCall.name} ${formatted}` : toolCall.name;
+    }
+  }
+}
+
+function formatCompactArgs(args: Record<string, unknown>): string {
+  const hidden = new Set(["content", "oldText", "newText"]);
+  const parts = Object.entries(args)
+    .filter(([key, value]) => value !== undefined && !hidden.has(key))
+    .slice(0, 4)
+    .map(([key, value]) => `${key}=${quote(summaryValue(value))}`);
+  if (Object.keys(args).some((key) => hidden.has(key))) parts.push("...");
+  return compactText(parts.join(" "), 120);
+}
+
+function summaryValue(value: unknown): string {
+  if (typeof value === "string") return compactText(value, 90);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) return compactText(value.map(summaryValue).join(", "), 90);
+  return compactText(JSON.stringify(value) ?? "", 90);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function quote(text: string): string {
+  if (!text) return "\"\"";
+  return /[\s"'`]/.test(text) ? JSON.stringify(text) : text;
+}
+
+function toolStatus(toolName: string, result: ToolResultMessage | undefined): string {
+  if (!result) return toolName === "bash" ? "Running" : "Calling";
+  if (result.isError) return "Failed";
+  return toolName === "bash" ? "Ran" : "Called";
+}
+
+function bullet(result: ToolResultMessage | undefined, color: boolean): string {
+  if (!result) return cyan("*", color);
+  return result.isError ? red("x", color) : green("*", color);
 }
 
 function green(text: string, color: boolean): string {

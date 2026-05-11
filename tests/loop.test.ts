@@ -52,6 +52,9 @@ describe("AgentRuntime loop", () => {
 
     const events = await collect(runtime.run("hi"));
     expect(events.at(-1)).toMatchObject({ type: "turn_end", reason: "stop", iterations: 1 });
+    expect(events.filter((event) => event.type === "iteration_start")).toEqual([
+      expect.objectContaining({ type: "iteration_start", iteration: 1, reason: "initial" })
+    ]);
     expect(runtime.messages().map((message) => message.role)).toEqual(["user", "assistant"]);
   });
 
@@ -181,6 +184,10 @@ describe("AgentRuntime loop", () => {
 
     const events = await collect(runtime.run("read it"));
     expect(events.some((event) => event.type === "tool_result")).toBe(true);
+    expect(events.filter((event) => event.type === "iteration_start")).toEqual([
+      expect.objectContaining({ type: "iteration_start", iteration: 1, reason: "initial" }),
+      expect.objectContaining({ type: "iteration_start", iteration: 2, reason: "tool_results" })
+    ]);
     expect(runtime.messages().map((message) => message.role)).toEqual([
       "user",
       "assistant",
@@ -249,6 +256,9 @@ describe("AgentRuntime loop", () => {
 
     const events = await collect(runtime.run("loop", { maxIterations: 1 }));
     expect(events.at(-1)).toMatchObject({ type: "turn_end", reason: "max_iterations", iterations: 1 });
+    expect(events.filter((event) => event.type === "iteration_start")).toEqual([
+      expect.objectContaining({ type: "iteration_start", iteration: 1, reason: "initial" })
+    ]);
   });
 
   it("does not apply a default maxIterations limit", async () => {
