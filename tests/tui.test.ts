@@ -186,7 +186,7 @@ describe("TUI event rendering", () => {
       timestamp: Date.now()
     };
 
-    expect(stripAnsi(renderToolStatus(toolCall, result, true))).toContain("* Called read note.txt hello world");
+    expect(stripAnsi(renderToolStatus(toolCall, result, true))).toContain("* read note.txt hello world");
   });
 
   it("renders concise tool call summaries without large json arguments", () => {
@@ -194,9 +194,9 @@ describe("TUI event rendering", () => {
     const editCall = fakeToolCall("edit", { path: "src/app.ts", oldText: "before", newText: "after" });
     const grepCall = fakeToolCall("grep", { pattern: "AgentEvent", path: "src" });
 
-    expect(stripAnsi(renderToolStatus(writeCall, undefined, true))).toBe("  * Calling write src/app.ts");
-    expect(stripAnsi(renderToolStatus(editCall, undefined, true))).toBe("  * Calling edit src/app.ts");
-    expect(stripAnsi(renderToolStatus(grepCall, undefined, true))).toBe("  * Calling grep AgentEvent in src");
+    expect(stripAnsi(renderToolStatus(writeCall, undefined, true))).toBe("  * write src/app.ts");
+    expect(stripAnsi(renderToolStatus(editCall, undefined, true))).toBe("  * edit src/app.ts");
+    expect(stripAnsi(renderToolStatus(grepCall, undefined, true))).toBe("  * grep AgentEvent in src");
   });
 
   it("renders assistant dividers as full-width lines", () => {
@@ -381,7 +381,7 @@ describe("Interactive TUI event controller", () => {
     controller.render({ type: "tool_result", toolCall, result: fakeToolResult(toolCall, "hello\nworld", false) });
     controller.render({ type: "turn_end", context: fakeTurnContext(), reason: "max_iterations", iterations: 3 });
 
-    expect(view.statuses).toEqual(["  * Called read note.txt hello world", "  max_iterations after 3 iteration(s)"]);
+    expect(view.statuses).toEqual(["  * read note.txt hello world", "  max_iterations after 3 iteration(s)"]);
     expect(view.statuses.join("\n")).toContain("max_iterations after 3 iteration(s)");
     expect(view.finishedReasons).toEqual(["max_iterations"]);
   });
@@ -394,7 +394,7 @@ describe("Interactive TUI event controller", () => {
     const toolCall = fakeToolCall("read", { path: "note.txt" });
     controller.render({ type: "tool_call_end", contentIndex: 0, toolCall, partial: fakeAssistant() });
 
-    expect(view.components).toEqual(["status:  * Calling read note.txt"]);
+    expect(view.components).toEqual(["status:  * read note.txt"]);
   });
 
   it("keeps streamed tool calls between surrounding assistant text", () => {
@@ -422,8 +422,8 @@ describe("Interactive TUI event controller", () => {
     });
 
     expect(view.assistants.map((message) => message.text)).toEqual(["before ", "after"]);
-    expect(view.components).toEqual(["divider", "assistant:0", "status:  * Calling read note.txt", "divider", "assistant:1"]);
-    expect(view.statuses).toEqual(["  * Called read note.txt hello"]);
+    expect(view.components).toEqual(["divider", "assistant:0", "status:  * read note.txt", "divider", "assistant:1"]);
+    expect(view.statuses).toEqual(["  * read note.txt hello"]);
   });
 
   it("starts a fresh assistant component after message end", () => {
@@ -527,6 +527,30 @@ describe("Interactive TUI layout", () => {
     expect(renderedPrevious).toContain("assistant text");
 
     view.finishRun("stop");
+    view.dispose();
+  });
+
+  it("uses hanging indentation for wrapped status lines", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal);
+    const theme = createArgonTuiTheme(false);
+    const editor = new Editor(tui, theme.editor);
+    const view = new PiTuiConversationView(tui, editor, theme, {
+      provider: "faux",
+      modelId: "faux",
+      cwd: "/tmp/project",
+      color: false
+    } as any);
+
+    view.addStatusMessage('  * bash "git diff --stat && git diff --cached --stat"');
+
+    const editorIndex = tui.children.indexOf(editor);
+    const lines = tui.children[editorIndex - 1]!.render(36).map(stripAnsi);
+
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines[0]?.startsWith("   * ")).toBe(true);
+    expect(lines.slice(1).every((line) => line.startsWith("     "))).toBe(true);
+
     view.dispose();
   });
 });

@@ -933,11 +933,11 @@ export class PiTuiConversationView implements InteractiveTuiView {
   }
 
   addStatusMessage(text: string): void {
-    this.addComponent(new Text(text, 1, 0));
+    this.addComponent(new StatusText(text, 1, 0));
   }
 
   addMutableStatusMessage(text: string): MutableStatusMessage {
-    const component = new Text(text, 1, 0);
+    const component = new StatusText(text, 1, 0);
     this.addComponent(component);
     return {
       setText: (next: string) => {
@@ -1109,6 +1109,72 @@ export class PiTuiConversationView implements InteractiveTuiView {
     const cwd = compactText(this.options.cwd, 72);
     return `${this.theme.ansi.bold("Argon")} ${mode} ${this.options.provider}/${this.options.modelId} cwd=${cwd}${config}`;
   }
+}
+
+class StatusText implements Component {
+  private cachedText: string | undefined;
+  private cachedWidth: number | undefined;
+  private cachedLines: string[] | undefined;
+
+  constructor(
+    private text: string,
+    private readonly paddingX: number,
+    private readonly paddingY: number,
+    private readonly continuationIndent = 4
+  ) {}
+
+  setText(text: string): void {
+    this.text = text;
+    this.invalidate();
+  }
+
+  invalidate(): void {
+    this.cachedText = undefined;
+    this.cachedWidth = undefined;
+    this.cachedLines = undefined;
+  }
+
+  render(width: number): string[] {
+    if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
+      return this.cachedLines;
+    }
+
+    if (!this.text || this.text.trim() === "") {
+      this.cachedText = this.text;
+      this.cachedWidth = width;
+      this.cachedLines = [];
+      return [];
+    }
+
+    const contentWidth = Math.max(1, width - this.paddingX * 2);
+    const contentLines = wrapStatusText(this.text.replace(/\t/g, "   "), contentWidth, this.continuationIndent);
+    const left = " ".repeat(this.paddingX);
+    const right = " ".repeat(this.paddingX);
+    const rendered = contentLines.map((line) => {
+      const withMargins = left + line + right;
+      return withMargins + " ".repeat(Math.max(0, width - visibleWidth(withMargins)));
+    });
+    const empty = " ".repeat(width);
+    const padding = Array.from({ length: this.paddingY }, () => empty);
+    const result = [...padding, ...rendered, ...padding];
+
+    this.cachedText = this.text;
+    this.cachedWidth = width;
+    this.cachedLines = result;
+    return result;
+  }
+}
+
+function wrapStatusText(text: string, width: number, continuationIndent: number): string[] {
+  const indent = " ".repeat(Math.min(Math.max(0, continuationIndent), Math.max(0, width - 1)));
+  const wrapWidth = Math.max(1, width - visibleWidth(indent));
+  const lines: string[] = [];
+  for (const rawLine of text.split("\n")) {
+    for (const line of wrapTextWithAnsi(rawLine, wrapWidth)) {
+      lines.push(lines.length === 0 ? line : indent + line);
+    }
+  }
+  return lines.length > 0 ? lines : [""];
 }
 
 function sessionItems(sessions: SessionInfo[]): SelectionItem[] {

@@ -19,10 +19,10 @@ that assistant text block. Tool-only model iterations do not render dividers.
 assistant
 ```
 
-Tool calls render as one compact status entry. The entry starts in a pending state, such as
-`Calling read src/index.ts`, and is updated in place when the tool result arrives, such as
-`Called read src/index.ts hello world`. Large parameters like file contents and edit replacement
-texts are hidden from the compact status line.
+Tool calls render as one compact status entry. The entry shows the tool name directly, such as
+`read src/index.ts`, and is updated in place when the tool result arrives, such as
+`read src/index.ts hello world`. Large parameters like file contents and edit replacement texts are
+hidden from the compact status line.
 
 The assistant divider is driven by visible `message_delta` text events. It is UI telemetry only;
 it is not added to the model transcript or resumable session context.

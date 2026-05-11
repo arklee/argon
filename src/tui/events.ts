@@ -137,12 +137,12 @@ export function renderToolCall(name: string, args: Record<string, unknown>, colo
 }
 
 export function renderToolStatus(toolCall: ToolCall, result: ToolResultMessage | undefined, color: boolean): string {
-  const status = toolStatus(toolCall.name, result);
-  const label = result?.isError ? red(status, color) : result ? green(status, color) : cyan(status, color);
-  const summary = summarizeToolCall(toolCall);
+  const label = result?.isError ? red(toolCall.name, color) : result ? green(toolCall.name, color) : cyan(toolCall.name, color);
+  const summary = summarizeToolCallArgs(toolCall);
+  const summaryPreview = summary ? ` ${summary}` : "";
   const output = result ? summarizeToolResult(result) : "";
   const outputPreview = output ? ` ${dim(output, color)}` : "";
-  return `  ${bullet(result, color)} ${label} ${summary}${outputPreview}`;
+  return `  ${bullet(result, color)} ${label}${summaryPreview}${outputPreview}`;
 }
 
 export function renderAssistantDivider(width: number, color: boolean): string {
@@ -194,26 +194,24 @@ function section(text: string, header: string): string | undefined {
   return (nextHeader === -1 ? after : after.slice(0, nextHeader)).trim();
 }
 
-function summarizeToolCall(toolCall: ToolCall): string {
+function summarizeToolCallArgs(toolCall: ToolCall): string {
   const args = asRecord(toolCall.arguments);
   switch (toolCall.name) {
     case "bash":
-      return `${toolCall.name} ${quote(summaryValue(args.command) || "(empty)")}`;
+      return quote(summaryValue(args.command) || "(empty)");
     case "read":
     case "write":
     case "edit":
-      return `${toolCall.name} ${summaryValue(args.path) || "(missing path)"}`;
+      return summaryValue(args.path) || "(missing path)";
     case "ls":
-      return `${toolCall.name} ${summaryValue(args.path) || "."}`;
+      return summaryValue(args.path) || ".";
     case "grep": {
       const pattern = summaryValue(args.pattern) || "(missing pattern)";
       const path = summaryValue(args.path);
-      return `${toolCall.name} ${quote(pattern)}${path ? ` in ${path}` : ""}`;
+      return `${quote(pattern)}${path ? ` in ${path}` : ""}`;
     }
-    default: {
-      const formatted = formatCompactArgs(args);
-      return formatted ? `${toolCall.name} ${formatted}` : toolCall.name;
-    }
+    default:
+      return formatCompactArgs(args);
   }
 }
 
@@ -242,12 +240,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 function quote(text: string): string {
   if (!text) return "\"\"";
   return /[\s"'`]/.test(text) ? JSON.stringify(text) : text;
-}
-
-function toolStatus(toolName: string, result: ToolResultMessage | undefined): string {
-  if (!result) return toolName === "bash" ? "Running" : "Calling";
-  if (result.isError) return "Failed";
-  return toolName === "bash" ? "Ran" : "Called";
 }
 
 function bullet(result: ToolResultMessage | undefined, color: boolean): string {
