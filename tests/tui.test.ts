@@ -16,7 +16,7 @@ import {
   type MutableTuiMessage,
   type SlashCommandContext
 } from "../src/tui/app.js";
-import { renderAssistantDivider, renderToolStatus, stripAnsi } from "../src/tui/events.js";
+import { renderToolStatus, stripAnsi } from "../src/tui/events.js";
 import {
   currentModelSupportsImages,
   maybeCreateAttachmentFromPastedPath,
@@ -186,7 +186,7 @@ describe("TUI event rendering", () => {
       timestamp: Date.now()
     };
 
-    expect(stripAnsi(renderToolStatus(toolCall, result, true))).toContain("* read note.txt hello world");
+    expect(stripAnsi(renderToolStatus(toolCall, result, true))).toContain("* read note.txt\n  hello world");
   });
 
   it("renders concise tool call summaries without large json arguments", () => {
@@ -197,10 +197,6 @@ describe("TUI event rendering", () => {
     expect(stripAnsi(renderToolStatus(writeCall, undefined, true))).toBe("  * write src/app.ts");
     expect(stripAnsi(renderToolStatus(editCall, undefined, true))).toBe("  * edit src/app.ts");
     expect(stripAnsi(renderToolStatus(grepCall, undefined, true))).toBe("  * grep AgentEvent in src");
-  });
-
-  it("renders assistant dividers as full-width lines", () => {
-    expect(stripAnsi(renderAssistantDivider(12, true))).toBe("────────────");
   });
 });
 
@@ -381,7 +377,7 @@ describe("Interactive TUI event controller", () => {
     controller.render({ type: "tool_result", toolCall, result: fakeToolResult(toolCall, "hello\nworld", false) });
     controller.render({ type: "turn_end", context: fakeTurnContext(), reason: "max_iterations", iterations: 3 });
 
-    expect(view.statuses).toEqual(["  * read note.txt hello world", "  max_iterations after 3 iteration(s)"]);
+    expect(view.statuses).toEqual(["  * read note.txt\n  hello world", "  max_iterations after 3 iteration(s)"]);
     expect(view.statuses.join("\n")).toContain("max_iterations after 3 iteration(s)");
     expect(view.finishedReasons).toEqual(["max_iterations"]);
   });
@@ -422,8 +418,8 @@ describe("Interactive TUI event controller", () => {
     });
 
     expect(view.assistants.map((message) => message.text)).toEqual(["before ", "after"]);
-    expect(view.components).toEqual(["divider", "assistant:0", "status:  * read note.txt", "divider", "assistant:1"]);
-    expect(view.statuses).toEqual(["  * read note.txt hello"]);
+    expect(view.components).toEqual(["assistant:0", "status:  * read note.txt", "assistant:1"]);
+    expect(view.statuses).toEqual(["  * read note.txt\n  hello"]);
   });
 
   it("starts a fresh assistant component after message end", () => {
@@ -473,6 +469,45 @@ describe("Interactive TUI event controller", () => {
 });
 
 describe("Interactive TUI layout", () => {
+  it("keeps concise help and model metadata directly below the editor", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal);
+    const theme = createArgonTuiTheme(false);
+    const editor = new Editor(tui, theme.editor);
+    const options = {
+      provider: "self-hosted",
+      modelId: "model1",
+      cwd: "/home/arkli/Code/lab",
+      color: false,
+      reasoning: "high",
+      configPath: "/home/arkli/.argon/settings.json"
+    } as any;
+    const view = new PiTuiConversationView(tui, editor, theme, options);
+
+    view.showWelcome();
+    view.addStatusMessage("tool output");
+
+    const editorIndex = tui.children.indexOf(editor);
+    const footer = stripAnsi(tui.children[editorIndex + 1]!.render(120).join("\n"));
+    const rendered = stripAnsi(tui.children.map((component) => component.render(120).join("\n")).join("\n"));
+
+    expect(footer).toContain("Type /help for commands.");
+    expect(footer).toContain("self-hosted");
+    expect(footer).toContain("model1");
+    expect(footer).toContain("thinking=high");
+    expect(rendered).not.toContain("Argon idle");
+    expect(rendered).not.toContain("cwd=");
+    expect(rendered).not.toContain("config=");
+
+    options.modelId = "model2";
+    options.reasoning = "minimal";
+    const updatedFooter = stripAnsi(tui.children[editorIndex + 1]!.render(120).join("\n"));
+    expect(updatedFooter).toContain("model2");
+    expect(updatedFooter).toContain("thinking=minimal");
+
+    view.dispose();
+  });
+
   it("renders submitted user prompts as input boxes and omits you/assistant labels", () => {
     const terminal = new FakeTerminal();
     const tui = new TUI(terminal);
@@ -553,6 +588,40 @@ describe("Interactive TUI layout", () => {
 
     view.dispose();
   });
+
+  it("keeps one blank line between assistant text and tool statuses", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal);
+    const theme = createArgonTuiTheme(false);
+    const editor = new Editor(tui, theme.editor);
+    const view = new PiTuiConversationView(tui, editor, theme, {
+      provider: "faux",
+      modelId: "faux",
+      cwd: "/tmp/project",
+      color: false
+    } as any);
+    const controller = new InteractiveEventController(view, { color: false, showThinking: false });
+    const toolCall = fakeToolCall("read", { path: "note.txt" });
+
+    controller.render({
+      type: "message_delta",
+      role: "assistant",
+      kind: "text",
+      contentIndex: 0,
+      delta: "hello\n\n",
+      partial: fakeAssistant()
+    });
+    controller.render({ type: "tool_call_end", contentIndex: 1, toolCall, partial: fakeAssistant() });
+
+    const editorIndex = tui.children.indexOf(editor);
+    const assistantLines = tui.children[editorIndex - 2]!.render(40).map((line) => stripAnsi(line).trimEnd());
+    const statusLines = tui.children[editorIndex - 1]!.render(40).map((line) => stripAnsi(line).trimEnd());
+
+    expect(assistantLines).toEqual(["  hello", ""]);
+    expect(statusLines[0]).toBe("   * read note.txt");
+
+    view.dispose();
+  });
 });
 
 class FakeMutableMessage implements MutableTuiMessage {
@@ -605,10 +674,6 @@ class FakeInteractiveView implements InteractiveTuiView {
     this.assistants.push(message);
     this.components.push(`assistant:${this.assistants.length - 1}`);
     return message;
-  }
-
-  addAssistantDivider(): void {
-    this.components.push("divider");
   }
 
   addThinkingMessage(): MutableTuiMessage {

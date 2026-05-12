@@ -28,7 +28,7 @@ import {
   type ArgonThinkingLevel
 } from "../thinking.js";
 import type { AgentEvent, AgentMessage, RunOptions, TurnEndReason, UserInput } from "../types.js";
-import { compactText, renderAssistantDivider, renderToolResult, renderToolStatus } from "./events.js";
+import { compactText, renderToolResult, renderToolStatus } from "./events.js";
 import { createArgonTuiTheme, type ArgonTuiTheme } from "./theme.js";
 import type { TuiOptions } from "./options.js";
 import { PickerComponent, type SelectionItem } from "./selectors.js";
@@ -84,6 +84,7 @@ export interface SlashCommandContext {
 
 export interface MutableTuiMessage {
   append(delta: string): void;
+  finalize?(): void;
 }
 
 export interface MutableStatusMessage {
@@ -94,7 +95,6 @@ export interface InteractiveTuiView {
   addUserMessage(text: string): void;
   addAssistantMessage(): MutableTuiMessage;
   addThinkingMessage(): MutableTuiMessage;
-  addAssistantDivider(): void;
   addStatusMessage(text: string): void;
   addMutableStatusMessage(text: string): MutableStatusMessage;
   renderMessages?(messages: AgentMessage[]): void;
@@ -196,7 +196,6 @@ export class InteractiveEventController {
 
   private assistantMessage(): MutableTuiMessage {
     if (!this.currentAssistant) {
-      this.view.addAssistantDivider();
       this.currentAssistant = this.view.addAssistantMessage();
     }
     return this.currentAssistant;
@@ -210,6 +209,8 @@ export class InteractiveEventController {
   }
 
   private closeStreamingBlocks(): void {
+    this.currentAssistant?.finalize?.();
+    this.currentThinking?.finalize?.();
     this.currentAssistant = undefined;
     this.currentThinking = undefined;
   }
@@ -866,16 +867,6 @@ class TextInputComponent implements Component {
   }
 }
 
-class AssistantDividerComponent implements Component {
-  constructor(private readonly color: boolean) {}
-
-  render(width: number): string[] {
-    return [renderAssistantDivider(width, this.color)];
-  }
-
-  invalidate(): void {}
-}
-
 class SubmittedInputComponent implements Component {
   constructor(
     private readonly text: string,
@@ -890,8 +881,7 @@ class SubmittedInputComponent implements Component {
 }
 
 export class PiTuiConversationView implements InteractiveTuiView {
-  private readonly status: Text;
-  private readonly hint: Text;
+  private readonly footer: TuiFooterComponent;
   private readonly messageComponents: Component[] = [];
   private turnStatus: Loader | undefined;
   private turnStatusTimer: NodeJS.Timeout | undefined;
@@ -904,11 +894,9 @@ export class PiTuiConversationView implements InteractiveTuiView {
     private readonly theme: ArgonTuiTheme,
     private readonly options: TuiOptions
   ) {
-    this.status = new Text("", 0, 0);
-    this.hint = new Text(this.theme.ansi.dim("Type /help for commands. Enter submits; Shift+Enter inserts a newline."), 0, 0);
-    this.tui.addChild(this.status);
-    this.tui.addChild(this.hint);
+    this.footer = new TuiFooterComponent(this.theme, this.options);
     this.tui.addChild(this.editor);
+    this.tui.addChild(this.footer);
     this.setRunning(false);
   }
 
@@ -926,10 +914,6 @@ export class PiTuiConversationView implements InteractiveTuiView {
 
   addThinkingMessage(): MutableTuiMessage {
     return this.addMutableMarkdown(`${this.theme.ansi.dim("thinking")}\n\n`, { dim: true });
-  }
-
-  addAssistantDivider(): void {
-    this.addComponent(new AssistantDividerComponent(this.options.color && Boolean(process.stdout.isTTY)));
   }
 
   addStatusMessage(text: string): void {
@@ -954,7 +938,7 @@ export class PiTuiConversationView implements InteractiveTuiView {
       if (message.role === "user") {
         this.addUserMessage(messageText(message));
       } else if (message.role === "assistant") {
-        const text = messageText(message);
+        const text = normalizeFinalMarkdown(messageText(message));
         if (text) this.addMarkdown(text);
         for (const toolCall of messageToolCalls(message)) {
           pendingToolStatuses.set(
@@ -988,7 +972,6 @@ export class PiTuiConversationView implements InteractiveTuiView {
 
   setRunning(running: boolean): void {
     this.editor.disableSubmit = running;
-    this.status.setText(this.statusText(running));
     if (running) {
       this.turnStartedAt = Date.now();
       this.runFinished = false;
@@ -1004,7 +987,6 @@ export class PiTuiConversationView implements InteractiveTuiView {
 
   finishRun(reason: TurnEndReason): void {
     this.editor.disableSubmit = false;
-    this.status.setText(this.statusText(false));
     this.runFinished = true;
     this.stopTurnStatusTimer();
     this.ensureTurnStatus();
@@ -1030,13 +1012,23 @@ export class PiTuiConversationView implements InteractiveTuiView {
 
   private addMutableMarkdown(prefix: string, options: { dim?: boolean } = {}): MutableTuiMessage {
     let content = "";
+    let finalized = false;
     const style = options.dim ? { color: this.theme.ansi.dim } : undefined;
     const markdown = new Markdown(prefix, 2, 0, this.theme.markdown, style);
     this.addComponent(markdown);
+    const setText = () => {
+      const text = prefix + content;
+      markdown.setText(finalized ? normalizeFinalMarkdown(text) : text);
+    };
     return {
       append: (delta: string) => {
+        finalized = false;
         content += delta;
-        markdown.setText(prefix + content);
+        setText();
+      },
+      finalize: () => {
+        finalized = true;
+        setText();
       }
     };
   }
@@ -1102,13 +1094,34 @@ export class PiTuiConversationView implements InteractiveTuiView {
     const elapsed = formatElapsedSeconds(Math.max(0, Math.floor((Date.now() - this.turnStartedAt) / 1000)));
     this.turnStatus?.setMessage(`Working (${elapsed} - Ctrl+C to interrupt)`);
   }
+}
 
-  private statusText(running: boolean): string {
-    const mode = running ? this.theme.ansi.yellow("running") : this.theme.ansi.green("idle");
-    const config = this.options.configPath ? ` config=${this.options.configPath}` : "";
-    const cwd = compactText(this.options.cwd, 72);
-    return `${this.theme.ansi.bold("Argon")} ${mode} ${this.options.provider}/${this.options.modelId} cwd=${cwd}${config}`;
+class TuiFooterComponent implements Component {
+  constructor(
+    private readonly theme: ArgonTuiTheme,
+    private readonly options: TuiOptions
+  ) {}
+
+  render(width: number): string[] {
+    const dimText = this.theme.ansi.dim;
+    const cyanText = this.theme.ansi.cyan;
+
+    const leftPart = ` ${dimText("Type /help for commands.")}`;
+    const thinkingLabel = currentThinkingLevel(this.options.reasoning);
+    const rightPart = cyanText(
+      `${this.options.provider} ${this.options.modelId} thinking=${thinkingLabel}`
+    );
+
+    const leftWidth = visibleWidth(leftPart);
+    const rightWidth = visibleWidth(rightPart);
+    const rightMargin = 3;
+    const availableWidth = Math.max(0, width - rightMargin);
+    const padding = " ".repeat(Math.max(0, availableWidth - leftWidth - rightWidth));
+    const fullText = leftPart + padding + rightPart;
+    return [fullText];
   }
+
+  invalidate(): void {}
 }
 
 class StatusText implements Component {
@@ -1230,6 +1243,11 @@ function messageToolCalls(message: AgentMessage): ToolCall[] {
   const content = "content" in message ? message.content : undefined;
   if (!Array.isArray(content)) return [];
   return content.filter((block): block is ToolCall => typeof block === "object" && block !== null && "type" in block && block.type === "toolCall");
+}
+
+function normalizeFinalMarkdown(text: string): string {
+  const trimmed = text.replace(/[ \t\r\n]+$/u, "");
+  return trimmed ? `${trimmed}\n\n` : "";
 }
 
 function formatElapsedSeconds(seconds: number): string {

@@ -88,7 +88,6 @@ export class TuiEventRenderer {
   private openAssistant(): void {
     if (this.assistantOpen) return;
     this.closeThinking();
-    this.line(renderAssistantDivider(this.outputWidth(), this.color));
     this.out.write(`${green("assistant", this.color)}\n`);
     this.assistantOpen = true;
   }
@@ -141,12 +140,8 @@ export function renderToolStatus(toolCall: ToolCall, result: ToolResultMessage |
   const summary = summarizeToolCallArgs(toolCall);
   const summaryPreview = summary ? ` ${summary}` : "";
   const output = result ? summarizeToolResult(result) : "";
-  const outputPreview = output ? ` ${dim(output, color)}` : "";
+  const outputPreview = output ? `\n  ${dim(output, color)}` : "";
   return `  ${bullet(result, color)} ${label}${summaryPreview}${outputPreview}`;
-}
-
-export function renderAssistantDivider(width: number, color: boolean): string {
-  return dim("─".repeat(Math.max(1, width)), color);
 }
 
 export function stripAnsi(text: string): string {
