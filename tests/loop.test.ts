@@ -296,6 +296,64 @@ describe("AgentRuntime loop", () => {
     ]);
   });
 
+  it("runs adjacent parallel-safe tool calls concurrently and preserves result order", async () => {
+    const cwd = await tempDir();
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall("inspect", { value: "first" }, { id: "call-first" }),
+        fauxToolCall("inspect", { value: "second" }, { id: "call-second" })
+      ]),
+      (context) => {
+        const resultTexts = context.messages
+          .filter((message) => message.role === "toolResult")
+          .map((message) => (message.role === "toolResult" ? firstText(message) : ""));
+        expect(resultTexts).toEqual(["first", "second"]);
+        return fauxAssistantMessage("done");
+      }
+    ]);
+
+    let active = 0;
+    let maxActive = 0;
+    const inspectTool: ToolRuntime = {
+      definition: {
+        name: "inspect",
+        description: "Inspectable parallel tool.",
+        parameters: Type.Object({})
+      },
+      canRunInParallel: true,
+      async execute(call) {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, call.id === "call-first" ? 40 : 10));
+        active--;
+        return {
+          role: "toolResult",
+          toolCallId: call.id,
+          toolName: call.name,
+          content: [{ type: "text", text: String(call.arguments.value) }],
+          isError: false,
+          timestamp: Date.now()
+        };
+      }
+    };
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd,
+      tools: [inspectTool],
+      apiKey: "test"
+    });
+
+    await collect(runtime.run("inspect both"));
+    expect(maxActive).toBe(2);
+    expect(
+      runtime.messages()
+        .filter((message) => message.role === "toolResult")
+        .map((message) => (message.role === "toolResult" ? firstText(message) : ""))
+    ).toEqual(["first", "second"]);
+  });
+
   it("persists tool call continuation records", async () => {
     const cwd = await tempDir();
     const session = SessionManager.create(cwd, join(cwd, ".sessions"));

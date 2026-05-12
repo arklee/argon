@@ -11,6 +11,7 @@ import {
   createReadTool,
   createWriteTool,
   type ToolExecutionContext,
+  type ToolRuntime,
   type TurnContext
 } from "../src/index.js";
 
@@ -43,6 +44,10 @@ function ctx(cwd: string): ToolExecutionContext {
     },
     messages: []
   };
+}
+
+function canRunInParallel(tool: { canRunInParallel?: ToolRuntime["canRunInParallel"] }, toolCall: ToolCall): boolean {
+  return typeof tool.canRunInParallel === "function" ? tool.canRunInParallel(toolCall) : tool.canRunInParallel === true;
 }
 
 describe("built-in tools", () => {
@@ -84,6 +89,17 @@ describe("built-in tools", () => {
 
     expect(result.isError).toBe(true);
     expect(firstText(result)).toContain("Timed out: yes");
+  });
+
+  it("marks simple read-only bash inspection commands as parallel-safe", () => {
+    const bash = createBashTool();
+
+    expect(canRunInParallel(bash, call("bash", { command: "rg pattern src" }))).toBe(true);
+    expect(canRunInParallel(bash, call("bash", { command: "sed -n '1,40p' src/index.ts" }))).toBe(true);
+    expect(canRunInParallel(bash, call("bash", { command: "ls src" }))).toBe(true);
+    expect(canRunInParallel(bash, call("bash", { command: "sed -i 's/a/b/' file.txt" }))).toBe(false);
+    expect(canRunInParallel(bash, call("bash", { command: "sed -ni '1p' file.txt" }))).toBe(false);
+    expect(canRunInParallel(bash, call("bash", { command: "rg pattern src && npm test" }))).toBe(false);
   });
 
   it("greps with bounded output", async () => {

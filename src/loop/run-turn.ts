@@ -9,6 +9,7 @@ import type {
   LoopState,
   RunTurnParams,
   ToolExecutionResult,
+  ToolRuntime,
   TurnContext,
   TurnEndReason,
   UserInput
@@ -73,16 +74,7 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
 
     const toolCalls = assistant.content.filter((block): block is ToolCall => block.type === "toolCall");
     if (toolCalls.length > 0) {
-      const toolResults: ToolResultMessage[] = [];
-      const terminateResults: boolean[] = [];
-      for (const toolCall of toolCalls) {
-        const outcome = await executeToolCall(toolCall, params, turn);
-        const { result, terminate } = normalizeToolExecutionResult(outcome);
-        params.messages.push(result);
-        toolResults.push(result);
-        terminateResults.push(terminate);
-        yield { type: "tool_result", toolCall, result };
-      }
+      const { toolResults, terminateResults } = yield* executeToolCalls(toolCalls, params, turn);
 
       if (terminateResults.every(Boolean)) {
         yield { type: "turn_end", context: turn, reason: "stop", iterations };
@@ -116,6 +108,73 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
     yield { type: "turn_end", context: turn, reason: "stop", iterations };
     return { reason: "stop", iterations };
   }
+}
+
+async function* executeToolCalls(
+  toolCalls: ToolCall[],
+  params: RunTurnParams,
+  turn: TurnContext
+): AsyncGenerator<AgentEvent, { toolResults: ToolResultMessage[]; terminateResults: boolean[] }> {
+  const toolResults: ToolResultMessage[] = [];
+  const terminateResults: boolean[] = [];
+
+  for (let index = 0; index < toolCalls.length;) {
+    const toolCall = toolCalls[index]!;
+
+    if (!canRunToolCallInParallel(toolCall, params.tools)) {
+      const outcome = await executeToolCall(toolCall, params, turn);
+      const normalized = normalizeToolExecutionResult(outcome);
+      appendToolResult(toolCall, normalized, params, toolResults, terminateResults);
+      yield { type: "tool_result", toolCall, result: normalized.result };
+      index++;
+      continue;
+    }
+
+    const batch: ToolCall[] = [];
+    while (index < toolCalls.length && canRunToolCallInParallel(toolCalls[index]!, params.tools)) {
+      batch.push(toolCalls[index]!);
+      index++;
+    }
+
+    const outcomes = await Promise.all(
+      batch.map(async (batchCall) => ({
+        toolCall: batchCall,
+        normalized: normalizeToolExecutionResult(await executeToolCall(batchCall, params, turn))
+      }))
+    );
+
+    for (const { toolCall: batchCall, normalized } of outcomes) {
+      appendToolResult(batchCall, normalized, params, toolResults, terminateResults);
+      yield { type: "tool_result", toolCall: batchCall, result: normalized.result };
+    }
+  }
+
+  return { toolResults, terminateResults };
+}
+
+function appendToolResult(
+  toolCall: ToolCall,
+  normalized: { result: ToolResultMessage; terminate: boolean },
+  params: RunTurnParams,
+  toolResults: ToolResultMessage[],
+  terminateResults: boolean[]
+): void {
+  params.messages.push(normalized.result);
+  toolResults.push(normalized.result);
+  terminateResults.push(normalized.terminate);
+}
+
+function canRunToolCallInParallel(toolCall: ToolCall, tools: readonly ToolRuntime[]): boolean {
+  const tool = tools.find((candidate) => candidate.definition.name === toolCall.name);
+  const setting = tool?.canRunInParallel;
+  if (typeof setting === "function") {
+    try {
+      return setting(toolCall);
+    } catch {
+      return false;
+    }
+  }
+  return setting === true;
 }
 
 async function* streamAssistantMessage(

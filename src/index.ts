@@ -11,6 +11,7 @@ export {
 } from "./compaction/index.js";
 export { configureGlobalProxyFromEnv, resolveProxyEnv } from "./provider/proxy.js";
 export { PromptManager, discoverAgentsInstructions, findProjectRoot } from "./prompt/manager.js";
+export { buildStartupContext } from "./prompt/startup-context.js";
 export { AuthStorage, FileAuthStorageBackend, InMemoryAuthStorageBackend, getDefaultAuthPath } from "./auth/storage.js";
 export { ModelRegistry, getDefaultModelsPath, parseModelSpecifier } from "./model/registry.js";
 export { getUserSettingsPath, loadUserSettings, saveDefaultModel, saveDefaultReasoning } from "./config/settings.js";
@@ -27,6 +28,7 @@ export type { ApiKeyCredential, AuthCredential, AuthStatus, AuthStorageBackend, 
 export type { ModelDefinition, ModelOverride, ModelsConfig, ProviderModelConfig, ResolvedRequestAuth } from "./model/registry.js";
 export type { UserSettings } from "./config/settings.js";
 export type { ArgonThinkingLevel } from "./thinking.js";
+export type { StartupContextConfig } from "./prompt/startup-context.js";
 export { JsonlSessionEventLog, MemorySessionEventLog } from "./session/event-log.js";
 export {
   SessionManager,

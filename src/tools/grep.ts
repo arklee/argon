@@ -15,6 +15,7 @@ export function createGrepTool(): ToolRuntime {
       })
     },
     guideline: "Search text with rg; respects ripgrep defaults.",
+    canRunInParallel: true,
     async execute(call, ctx) {
       const pattern = requireString(call.arguments.pattern, "pattern");
       const searchPath = typeof call.arguments.path === "string" ? call.arguments.path : ".";

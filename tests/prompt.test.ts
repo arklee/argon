@@ -13,6 +13,7 @@ async function tempDir(): Promise<string> {
 describe("PromptManager", () => {
   it("includes cwd, date, and enabled tool guidelines", async () => {
     const cwd = await tempDir();
+    await writeFile(join(cwd, "index.ts"), "export {}", "utf8");
     const prompt = new PromptManager().buildSystemPrompt({
       cwd,
       tools: [createReadTool()],
@@ -22,8 +23,24 @@ describe("PromptManager", () => {
     expect(prompt).toContain("Current working directory");
     expect(prompt).toContain(cwd);
     expect(prompt).toContain("2026-05-10");
+    expect(prompt).toContain("# Startup Context");
+    expect(prompt).toContain("Working directory tree");
+    expect(prompt).toContain("index.ts");
     expect(prompt).toContain("- read:");
     expect(prompt).not.toContain("- bash:");
+  });
+
+  it("can disable startup context injection", async () => {
+    const cwd = await tempDir();
+    await writeFile(join(cwd, "index.ts"), "export {}", "utf8");
+    const prompt = new PromptManager().buildSystemPrompt({
+      cwd,
+      tools: [],
+      config: { startupContext: false }
+    });
+
+    expect(prompt).not.toContain("# Startup Context");
+    expect(prompt).not.toContain("index.ts");
   });
 
   it("includes Codex-lite default behavior guidance", async () => {

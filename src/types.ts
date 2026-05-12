@@ -12,6 +12,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { SessionManager } from "./session/manager.js";
 import type { ArgonThinkingLevel } from "./thinking.js";
+import type { StartupContextConfig } from "./prompt/startup-context.js";
 
 export type AgentMessage = Message;
 
@@ -107,6 +108,7 @@ export interface ToolRuntime {
   definition: Tool<any>;
   execute(call: ToolCall, ctx: ToolExecutionContext): Promise<ToolExecutionResult>;
   guideline?: string;
+  canRunInParallel?: boolean | ((call: ToolCall) => boolean);
 }
 
 export type ApiKeyResolver = string | ((provider: string) => string | Promise<string | undefined> | undefined);
@@ -129,6 +131,7 @@ export interface PromptConfig {
   projectInstructions?: string | undefined;
   includeProjectInstructions?: boolean | undefined;
   maxProjectInstructionsBytes?: number | undefined;
+  startupContext?: StartupContextConfig | false | undefined;
   now?: Date | undefined;
 }
 

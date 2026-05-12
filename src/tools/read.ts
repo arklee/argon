@@ -14,6 +14,7 @@ export function createReadTool(): ToolRuntime {
       })
     },
     guideline: "Read UTF-8 files before editing them.",
+    canRunInParallel: true,
     async execute(call, ctx) {
       const filePath = resolveWorkspacePath(ctx.cwd, requireString(call.arguments.path, "path"));
       const maxBytes = optionalNumber(call.arguments.maxBytes, 65536);

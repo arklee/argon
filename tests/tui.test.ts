@@ -501,7 +501,7 @@ describe("Interactive TUI layout", () => {
     expect(footer).toContain("Type /help for commands.");
     expect(footer).toContain("self-hosted");
     expect(footer).toContain("model1");
-    expect(footer).toContain("thinking=high");
+    expect(footer).toContain("self-hosted model1 high");
     expect(rendered).not.toContain("Argon idle");
     expect(rendered).not.toContain("cwd=");
     expect(rendered).not.toContain("config=");
@@ -510,7 +510,7 @@ describe("Interactive TUI layout", () => {
     options.reasoning = "minimal";
     const updatedFooter = stripAnsi(tui.children[editorIndex + 1]!.render(120).join("\n"));
     expect(updatedFooter).toContain("model2");
-    expect(updatedFooter).toContain("thinking=minimal");
+    expect(updatedFooter).toContain("self-hosted model2 minimal");
 
     view.dispose();
   });

@@ -13,6 +13,7 @@ export function createLsTool(): ToolRuntime {
       })
     },
     guideline: "List directory contents without invoking a shell.",
+    canRunInParallel: true,
     async execute(call, ctx) {
       const requestedPath = typeof call.arguments.path === "string" ? call.arguments.path : ".";
       const dirPath = resolveWorkspacePath(ctx.cwd, requireString(requestedPath, "path"));

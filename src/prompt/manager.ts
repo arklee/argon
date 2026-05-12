@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { platform } from "node:os";
 import type { PromptBuildInput, PromptConfig, ToolRuntime } from "../types.js";
+import { buildStartupContext } from "./startup-context.js";
 
 const DEFAULT_MAX_PROJECT_INSTRUCTIONS_BYTES = 64 * 1024;
 
@@ -14,6 +15,7 @@ const DEFAULT_BEHAVIOR_RULES = [
   "Keep changes scoped to the request and consistent with existing project patterns before adding new abstractions.",
   "Use precise file paths when discussing code or changes.",
   "For exploration, prefer read, ls, grep, rg, or rg --files; use bash for broader commands and workflows.",
+  "When you need multiple independent file reads, searches, or directory listings, request those tool calls together so Argon can run parallel-safe tools concurrently.",
   "Update documentation when module behavior, public APIs, tool contracts, session formats, or architectural decisions change.",
   "Run focused tests or checks when appropriate, and do not claim a change was verified unless a check actually ran.",
   "Keep user-facing responses concise, with clear paths, changed behavior, and verification status."
@@ -39,6 +41,9 @@ export class PromptManager {
 
     const projectInstructions = this.renderProjectInstructions(cwd, config);
     if (projectInstructions) sections.push(projectInstructions);
+
+    const startupContext = buildStartupContext(cwd, config.startupContext);
+    if (startupContext) sections.push(["# Startup Context", startupContext].join("\n"));
 
     sections.push(this.renderEnvironmentContext(cwd, config.now ?? new Date()));
 
