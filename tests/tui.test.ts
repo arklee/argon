@@ -447,15 +447,22 @@ describe("Interactive TUI event controller", () => {
     expect(view.assistants.map((message) => message.text)).toEqual(["first", "second"]);
   });
 
-  it("renders error and aborted statuses", () => {
+  it("renders error statuses", () => {
     const view = new FakeInteractiveView();
     const controller = new InteractiveEventController(view, { color: false, showThinking: false });
 
     controller.render({ type: "error", error: new Error("network down"), recoverable: false });
-    controller.render({ type: "turn_end", context: fakeTurnContext(), reason: "aborted", iterations: 1 });
 
     expect(view.statuses.join("\n")).toContain("error network down");
-    expect(view.statuses.join("\n")).toContain("aborted after 1 iteration(s)");
+  });
+
+  it("does not render extra status text for aborted runs", () => {
+    const view = new FakeInteractiveView();
+    const controller = new InteractiveEventController(view, { color: false, showThinking: false });
+
+    controller.render({ type: "turn_end", context: fakeTurnContext(), reason: "aborted", iterations: 1 });
+
+    expect(view.statuses.join("\n")).not.toContain("aborted after 1 iteration(s)");
     expect(view.finishedReasons).toEqual(["aborted"]);
   });
 

@@ -432,5 +432,6 @@ describe("AgentRuntime loop", () => {
 
     const events = await collect(runtime.run("hi", { signal: controller.signal }));
     expect(events.at(-1)).toMatchObject({ type: "turn_end", reason: "aborted" });
+    expect(events.some((event) => event.type === "error")).toBe(false);
   });
 });

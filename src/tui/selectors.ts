@@ -1,4 +1,13 @@
-import { ProcessTerminal, SelectList, Text, TUI, type Component, type SelectItem, type SelectListTheme } from "@earendil-works/pi-tui";
+import {
+  ProcessTerminal,
+  SelectList,
+  TUI,
+  truncateToWidth,
+  visibleWidth,
+  type Component,
+  type SelectItem,
+  type SelectListTheme
+} from "@earendil-works/pi-tui";
 
 export interface SelectionItem {
   value: string;
@@ -29,7 +38,7 @@ export class PickerComponent implements Component {
   constructor(
     private readonly title: string,
     items: SelectionItem[],
-    theme: SelectListTheme,
+    private readonly theme: SelectListTheme,
     private readonly onDone: (value: string | undefined) => void
   ) {
     this.list = new SelectList(
@@ -43,9 +52,16 @@ export class PickerComponent implements Component {
   }
 
   render(width: number): string[] {
-    const header = new Text(this.title, 0, 0).render(width);
-    const hint = new Text("enter to select, esc to cancel", 0, 0).render(width);
-    return [...header, ...this.list.render(width), ...hint];
+    const contentWidth = Math.max(1, width - 4);
+    const contentLines = [
+      this.theme.selectedText(this.title),
+      "",
+      ...this.list.render(contentWidth),
+      "",
+      this.theme.scrollInfo("enter to select, esc to cancel")
+    ];
+
+    return renderModalBox(contentLines, width, this.theme.scrollInfo);
   }
 
   handleInput(data: string): void {
@@ -55,4 +71,21 @@ export class PickerComponent implements Component {
   invalidate(): void {
     this.list.invalidate();
   }
+}
+
+function renderModalBox(lines: string[], width: number, border: (text: string) => string): string[] {
+  if (width <= 4) return lines.map((line) => truncateToWidth(line, width, "", true));
+
+  const innerWidth = Math.max(1, width - 2);
+  const contentWidth = Math.max(1, innerWidth - 2);
+  const top = border(`╭${"─".repeat(innerWidth)}╮`);
+  const bottom = border(`╰${"─".repeat(innerWidth)}╯`);
+  const body = lines.map((line) => `${border("│")} ${padLine(line, contentWidth)} ${border("│")}`);
+
+  return [top, ...body, bottom];
+}
+
+function padLine(line: string, width: number): string {
+  const truncated = visibleWidth(line) > width ? truncateToWidth(line, width, "", true) : line;
+  return `${truncated}${" ".repeat(Math.max(0, width - visibleWidth(truncated)))}`;
 }

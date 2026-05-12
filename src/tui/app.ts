@@ -179,7 +179,7 @@ export class InteractiveEventController {
         this.closeStreamingBlocks();
         this.pendingToolStatuses.clear();
         this.view.finishRun(event.reason);
-        if (event.reason !== "stop") {
+        if (event.reason !== "stop" && event.reason !== "aborted") {
           this.view.addStatusMessage(`  ${event.reason} after ${event.iterations} iteration(s)`);
         }
         break;
@@ -329,7 +329,9 @@ class ArgonInteractiveTui {
     this.editor.onPasteText = async (text) => await this.attachPastedImagePath(text);
 
     this.tui.addInputListener((data) => {
-      if (!matchesKey(data, "ctrl+c")) return undefined;
+      const isCtrlC = matchesKey(data, "ctrl+c");
+      const isEsc = matchesKey(data, "esc") || matchesKey(data, "escape");
+      if (!isCtrlC && !isEsc) return undefined;
 
       if (this.running) {
         this.runtime.abort();
@@ -338,8 +340,32 @@ class ArgonInteractiveTui {
         return { consume: true };
       }
 
-      void this.shutdown();
-      return { consume: true };
+      // Let overlays (pickers, prompts) handle Esc.
+      if (isEsc && this.tui.hasOverlay()) return undefined;
+
+      const editorHasFocus = this.editor.focused && !this.tui.hasOverlay();
+      if (editorHasFocus) {
+        // Preserve editor's own Esc behavior for closing autocomplete.
+        if (isEsc && this.editor.isShowingAutocomplete()) return undefined;
+
+        const text = this.editor.getText();
+        if (text.length > 0) {
+          this.editor.setText("");
+          this.imageAttachments = [];
+          this.view.requestRender();
+          return { consume: true };
+        }
+
+        // Empty input: Esc does nothing.
+        if (isEsc) return { consume: true };
+      }
+
+      if (isCtrlC) {
+        void this.shutdown();
+        return { consume: true };
+      }
+
+      return undefined;
     });
 
     this.tui.setFocus(this.editor);
@@ -1092,7 +1118,7 @@ export class PiTuiConversationView implements InteractiveTuiView {
 
   private updateWorkingText(): void {
     const elapsed = formatElapsedSeconds(Math.max(0, Math.floor((Date.now() - this.turnStartedAt) / 1000)));
-    this.turnStatus?.setMessage(`Working (${elapsed} - Ctrl+C to interrupt)`);
+    this.turnStatus?.setMessage(`Working (${elapsed} - Esc/Ctrl+C to interrupt)`);
   }
 }
 
@@ -1109,7 +1135,7 @@ class TuiFooterComponent implements Component {
     const leftPart = ` ${dimText("Type /help for commands.")}`;
     const thinkingLabel = currentThinkingLevel(this.options.reasoning);
     const rightPart = cyanText(
-      `${this.options.provider} ${this.options.modelId} thinking=${thinkingLabel}`
+      `${this.options.provider} ${this.options.modelId} ${thinkingLabel}`
     );
 
     const leftWidth = visibleWidth(leftPart);

@@ -64,7 +64,7 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
 
     if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
       const reason = assistant.stopReason;
-      if (assistant.errorMessage) {
+      if (reason === "error" && assistant.errorMessage) {
         yield { type: "error", error: new Error(assistant.errorMessage), recoverable: false };
       }
       yield { type: "turn_end", context: turn, reason, iterations };
