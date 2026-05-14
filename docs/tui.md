@@ -27,6 +27,13 @@ hidden from the compact status line.
 The assistant divider is driven by visible `message_delta` text events. It is UI telemetry only;
 it is not added to the model transcript or resumable session context.
 
+## Subscription Login
+
+During `/login` subscription authentication, the TUI still prints the full OAuth URL for manual
+copying. It also shows a short `Open in browser: click here` terminal hyperlink immediately below
+the URL, so terminals with OSC 8 hyperlink support can open the login URL from a single short
+clickable label instead of the wrapped URL.
+
 ## Image Paste
 
 The interactive TUI supports image attachments for models whose `input` modalities include

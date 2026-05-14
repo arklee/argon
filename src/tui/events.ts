@@ -141,7 +141,7 @@ export function renderToolStatus(toolCall: ToolCall, result: ToolResultMessage |
   const summaryPreview = summary ? ` ${summary}` : "";
   const output = result ? summarizeToolResult(result) : "";
   const outputPreview = output ? `\n  ${dim(output, color)}` : "";
-  return `  ${bullet(result, color)} ${label}${summaryPreview}${outputPreview}`;
+  return ` ${bullet(result, color)} ${label}${summaryPreview}${outputPreview}`;
 }
 
 export function stripAnsi(text: string): string {

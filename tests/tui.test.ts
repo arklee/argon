@@ -10,6 +10,7 @@ import {
   TUI_SLASH_COMMANDS,
   createInteractiveRunOptions,
   rememberSubmittedPrompt,
+  renderOAuthLoginBrowserLink,
   resolveSlashCommand,
   type InteractiveTuiView,
   type MutableStatusMessage,
@@ -172,6 +173,15 @@ describe("TUI options", () => {
     expect(createInteractiveRunOptions({ reasoning: "high" } as any)).toEqual({ reasoning: "high" });
     expect(createInteractiveRunOptions({} as any)).toEqual({});
   });
+
+  it("renders the OAuth browser hint as a terminal hyperlink", () => {
+    const theme = createArgonTuiTheme(false);
+    const url = "https://example.test/oauth?code=true&client_id=argon";
+
+    expect(renderOAuthLoginBrowserLink(url, theme)).toBe(
+      `Open in browser: \u001b]8;;${url}\u001b\\click here\u001b]8;;\u001b\\`
+    );
+  });
 });
 
 describe("TUI event rendering", () => {
@@ -194,9 +204,9 @@ describe("TUI event rendering", () => {
     const editCall = fakeToolCall("edit", { path: "src/app.ts", oldText: "before", newText: "after" });
     const grepCall = fakeToolCall("grep", { pattern: "AgentEvent", path: "src" });
 
-    expect(stripAnsi(renderToolStatus(writeCall, undefined, true))).toBe("  * write src/app.ts");
-    expect(stripAnsi(renderToolStatus(editCall, undefined, true))).toBe("  * edit src/app.ts");
-    expect(stripAnsi(renderToolStatus(grepCall, undefined, true))).toBe("  * grep AgentEvent in src");
+    expect(stripAnsi(renderToolStatus(writeCall, undefined, true))).toBe(" * write src/app.ts");
+    expect(stripAnsi(renderToolStatus(editCall, undefined, true))).toBe(" * edit src/app.ts");
+    expect(stripAnsi(renderToolStatus(grepCall, undefined, true))).toBe(" * grep AgentEvent in src");
   });
 });
 
@@ -377,7 +387,7 @@ describe("Interactive TUI event controller", () => {
     controller.render({ type: "tool_result", toolCall, result: fakeToolResult(toolCall, "hello\nworld", false) });
     controller.render({ type: "turn_end", context: fakeTurnContext(), reason: "max_iterations", iterations: 3 });
 
-    expect(view.statuses).toEqual(["  * read note.txt\n  hello world", "  max_iterations after 3 iteration(s)"]);
+    expect(view.statuses).toEqual([" * read note.txt\n  hello world", "  max_iterations after 3 iteration(s)"]);
     expect(view.statuses.join("\n")).toContain("max_iterations after 3 iteration(s)");
     expect(view.finishedReasons).toEqual(["max_iterations"]);
   });
@@ -390,7 +400,7 @@ describe("Interactive TUI event controller", () => {
     const toolCall = fakeToolCall("read", { path: "note.txt" });
     controller.render({ type: "tool_call_end", contentIndex: 0, toolCall, partial: fakeAssistant() });
 
-    expect(view.components).toEqual(["status:  * read note.txt"]);
+    expect(view.components).toEqual(["status: * read note.txt"]);
   });
 
   it("keeps streamed tool calls between surrounding assistant text", () => {
@@ -418,8 +428,8 @@ describe("Interactive TUI event controller", () => {
     });
 
     expect(view.assistants.map((message) => message.text)).toEqual(["before ", "after"]);
-    expect(view.components).toEqual(["assistant:0", "status:  * read note.txt", "assistant:1"]);
-    expect(view.statuses).toEqual(["  * read note.txt\n  hello"]);
+    expect(view.components).toEqual(["assistant:0", "status: * read note.txt", "assistant:1"]);
+    expect(view.statuses).toEqual([" * read note.txt\n  hello"]);
   });
 
   it("starts a fresh assistant component after message end", () => {
@@ -625,7 +635,7 @@ describe("Interactive TUI layout", () => {
     const statusLines = tui.children[editorIndex - 1]!.render(40).map((line) => stripAnsi(line).trimEnd());
 
     expect(assistantLines).toEqual(["  hello", ""]);
-    expect(statusLines[0]).toBe("   * read note.txt");
+    expect(statusLines[0]).toBe(" * read note.txt");
 
     view.dispose();
   });

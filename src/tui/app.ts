@@ -7,6 +7,7 @@ import {
   ProcessTerminal,
   Text,
   TUI,
+  hyperlink,
   matchesKey,
   truncateToWidth,
   visibleWidth,
@@ -91,18 +92,24 @@ export interface MutableStatusMessage {
   setText(text: string): void;
 }
 
+export interface StatusMessageOptions {
+  paddingX?: number | undefined;
+}
+
 export interface InteractiveTuiView {
   addUserMessage(text: string): void;
   addAssistantMessage(): MutableTuiMessage;
   addThinkingMessage(): MutableTuiMessage;
-  addStatusMessage(text: string): void;
-  addMutableStatusMessage(text: string): MutableStatusMessage;
+  addStatusMessage(text: string, options?: StatusMessageOptions): void;
+  addMutableStatusMessage(text: string, options?: StatusMessageOptions): MutableStatusMessage;
   renderMessages?(messages: AgentMessage[]): void;
   clearMessages(): void;
   setRunning(running: boolean): void;
   finishRun(reason: TurnEndReason): void;
   requestRender(): void;
 }
+
+const TOOL_STATUS_OPTIONS: StatusMessageOptions = { paddingX: 0 };
 
 export class InteractiveEventController {
   private currentAssistant: MutableTuiMessage | undefined;
@@ -158,7 +165,7 @@ export class InteractiveEventController {
         this.closeStreamingBlocks();
         this.pendingToolStatuses.set(event.toolCall.id, {
           toolCall: event.toolCall,
-          message: this.view.addMutableStatusMessage(renderToolStatus(event.toolCall, undefined, this.options.color))
+          message: this.view.addMutableStatusMessage(renderToolStatus(event.toolCall, undefined, this.options.color), TOOL_STATUS_OPTIONS)
         });
         break;
       case "tool_result":
@@ -169,7 +176,7 @@ export class InteractiveEventController {
             pending.message.setText(renderToolStatus(pending.toolCall, event.result, this.options.color));
             this.pendingToolStatuses.delete(event.result.toolCallId);
           } else {
-            this.view.addStatusMessage(renderToolStatus(event.toolCall, event.result, this.options.color));
+            this.view.addStatusMessage(renderToolStatus(event.toolCall, event.result, this.options.color), TOOL_STATUS_OPTIONS);
           }
         }
         break;
@@ -274,6 +281,10 @@ export function createInteractiveRunOptions(options: TuiOptions): RunOptions {
     ...(options.reasoning ? { reasoning: options.reasoning } : {}),
     ...(options.compaction ? { compaction: options.compaction } : {})
   };
+}
+
+export function renderOAuthLoginBrowserLink(url: string, theme: ArgonTuiTheme): string {
+  return `${theme.ansi.dim("Open in browser: ")}${hyperlink(theme.ansi.cyan(theme.ansi.underline("click here")), url)}`;
 }
 
 export function rememberSubmittedPrompt(editor: Pick<Editor, "addToHistory">, prompt: string): string | undefined {
@@ -656,6 +667,7 @@ class ArgonInteractiveTui {
       await this.modelRegistry.authStorage.login(selected, {
         onAuth: (info) => {
           this.view.addStatusMessage(this.theme.ansi.dim(`Open this URL to login: ${info.url}`));
+          this.view.addStatusMessage(renderOAuthLoginBrowserLink(info.url, this.theme));
           if (info.instructions) this.view.addStatusMessage(this.theme.ansi.dim(info.instructions));
           openExternal(info.url);
         },
@@ -942,12 +954,12 @@ export class PiTuiConversationView implements InteractiveTuiView {
     return this.addMutableMarkdown(`${this.theme.ansi.dim("thinking")}\n\n`, { dim: true });
   }
 
-  addStatusMessage(text: string): void {
-    this.addComponent(new StatusText(text, 1, 0));
+  addStatusMessage(text: string, options: StatusMessageOptions = {}): void {
+    this.addComponent(new StatusText(text, options.paddingX ?? 1, 0));
   }
 
-  addMutableStatusMessage(text: string): MutableStatusMessage {
-    const component = new StatusText(text, 1, 0);
+  addMutableStatusMessage(text: string, options: StatusMessageOptions = {}): MutableStatusMessage {
+    const component = new StatusText(text, options.paddingX ?? 1, 0);
     this.addComponent(component);
     return {
       setText: (next: string) => {
@@ -971,7 +983,7 @@ export class PiTuiConversationView implements InteractiveTuiView {
             toolCall.id,
             {
               toolCall,
-              message: this.addMutableStatusMessage(renderToolStatus(toolCall, undefined, this.options.color && Boolean(process.stdout.isTTY)))
+              message: this.addMutableStatusMessage(renderToolStatus(toolCall, undefined, this.options.color && Boolean(process.stdout.isTTY)), TOOL_STATUS_OPTIONS)
             }
           );
         }
@@ -981,7 +993,7 @@ export class PiTuiConversationView implements InteractiveTuiView {
           pending.message.setText(renderToolStatus(pending.toolCall, message, this.options.color && Boolean(process.stdout.isTTY)));
           pendingToolStatuses.delete(message.toolCallId);
         } else {
-          this.addStatusMessage(renderToolResult(message, this.options.color && Boolean(process.stdout.isTTY)));
+          this.addStatusMessage(renderToolResult(message, this.options.color && Boolean(process.stdout.isTTY)), TOOL_STATUS_OPTIONS);
         }
       }
     }
