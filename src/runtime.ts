@@ -14,11 +14,15 @@ import type { SessionManager } from "./session/manager.js";
 import { Transcript } from "./session/transcript.js";
 import { createDefaultTools } from "./tools/index.js";
 import { completeWithProvider } from "./provider/index.js";
+import { McpConnectionManager } from "./mcp/index.js";
+import { SkillManager } from "./skills/index.js";
 
 export class AgentRuntime {
   private readonly transcript = new Transcript();
   private readonly eventLog: SessionEventLog | undefined;
-  private readonly tools;
+  private readonly baseTools;
+  private readonly mcpManager: McpConnectionManager | undefined;
+  private readonly skillManager: SkillManager | undefined;
   private session: SessionManager | undefined;
   private activeAbortController: AbortController | undefined;
   private pendingSessionTurn:
@@ -29,7 +33,9 @@ export class AgentRuntime {
     | undefined;
 
   constructor(private readonly config: AgentRuntimeConfig) {
-    this.tools = config.tools ?? createDefaultTools(config.cwd);
+    this.baseTools = config.tools ?? createDefaultTools(config.cwd);
+    this.mcpManager = config.mcp ? new McpConnectionManager(config.mcp) : undefined;
+    this.skillManager = config.skills?.enabled === false ? undefined : new SkillManager(config.cwd, config.skills);
     this.eventLog = config.eventLogPath ? new JsonlSessionEventLog(config.eventLogPath) : undefined;
     this.session = config.session;
     this.hydrateFromSession();
@@ -122,6 +128,11 @@ export class AgentRuntime {
     this.activeAbortController?.abort();
   }
 
+  shutdown(): void {
+    this.abort();
+    this.mcpManager?.shutdown();
+  }
+
   private hydrateFromSession(): void {
     if (!this.session) return;
     this.transcript.replace(this.session.buildContext().messages);
@@ -133,13 +144,23 @@ export class AgentRuntime {
   ): AsyncGenerator<AgentEvent, { reason: TurnEndReason | undefined; lastAssistant: AssistantMessage | undefined }> {
     let reason: TurnEndReason | undefined;
     let lastAssistant: AssistantMessage | undefined;
+    const skillOutcome = this.skillManager?.load();
+    const injected = input !== undefined ? this.skillManager?.inject(input) : undefined;
+    const mcpStartup = await this.mcpManager?.ensureConnected(runOptions.signal);
+    for (const event of mcpStartup?.events ?? []) {
+      await this.eventLog?.append(event);
+      yield event;
+    }
+    const tools = [...this.baseTools, ...(mcpStartup?.tools ?? [])];
     for await (const event of runTurn({
-      ...(input !== undefined ? { input } : {}),
+      ...(input !== undefined ? { input: injected?.input ?? input } : {}),
       messages: this.transcript.messages,
       model: this.config.model,
       cwd: this.config.cwd,
       promptConfig: this.config.prompt,
-      tools: this.tools,
+      skills: skillOutcome?.skills,
+      skillPromptMaxBytes: this.config.skills?.maxPromptBytes,
+      tools,
       apiKey: this.config.apiKey,
       requestAuth: this.config.requestAuth,
       sessionId: this.config.sessionId,

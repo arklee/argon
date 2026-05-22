@@ -3,6 +3,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { platform } from "node:os";
 import type { PromptBuildInput, PromptConfig, ToolRuntime } from "../types.js";
 import { buildStartupContext } from "./startup-context.js";
+import { renderAvailableSkills } from "../skills/render.js";
 
 const DEFAULT_MAX_PROJECT_INSTRUCTIONS_BYTES = 64 * 1024;
 
@@ -38,6 +39,9 @@ export class PromptManager {
 
     const toolSection = this.renderToolGuidelines(input.tools);
     if (toolSection) sections.push(toolSection);
+
+    const skillsSection = renderAvailableSkills(input.skills ?? [], input.skillPromptMaxBytes);
+    if (skillsSection) sections.push(skillsSection);
 
     const projectInstructions = this.renderProjectInstructions(cwd, config);
     if (projectInstructions) sections.push(projectInstructions);

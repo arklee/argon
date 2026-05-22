@@ -67,6 +67,37 @@ describe("AgentRuntime loop", () => {
     expect(runtime.messages().map((message) => message.role)).toEqual(["user", "assistant"]);
   });
 
+  it("injects mentioned skill instructions before provider invocation", async () => {
+    const cwd = await tempDir();
+    await mkdir(join(cwd, ".git"));
+    const skillDir = join(cwd, ".agents", "skills", "review-helper");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      "---\nname: review-helper\ndescription: Use when reviewing code changes.\n---\n\n# Review Helper\nFollow the checklist.",
+      "utf8"
+    );
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([
+      (context) => {
+        const first = context.messages[0];
+        expect(first?.role).toBe("user");
+        expect(first?.role === "user" ? first.content : "").toContain("<skill>");
+        expect(first?.role === "user" ? first.content : "").toContain("Follow the checklist.");
+        return fauxAssistantMessage("done");
+      }
+    ]);
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd,
+      tools: [],
+      apiKey: "test"
+    });
+
+    await collect(runtime.run("Use $review-helper here"));
+  });
+
   it("switches the runtime model for the next turn", async () => {
     faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
     faux.setResponses([fauxAssistantMessage("hello")]);

@@ -13,6 +13,8 @@ import type {
 import type { SessionManager } from "./session/manager.js";
 import type { ArgonThinkingLevel } from "./thinking.js";
 import type { StartupContextConfig } from "./prompt/startup-context.js";
+import type { McpRuntimeConfig } from "./mcp/config.js";
+import type { SkillMetadata, SkillRuntimeConfig } from "./skills/model.js";
 
 export type AgentMessage = Message;
 
@@ -55,6 +57,7 @@ export interface CompactionResult {
 
 export type AgentEvent =
   | { type: "turn_start"; context: TurnContext }
+  | { type: "mcp_server_status"; server: string; status: "starting" | "ready" | "failed"; errorMessage?: string | undefined }
   | { type: "compaction_start"; reason: CompactionReason; tokensBefore: number; messagesBefore: number }
   | {
       type: "compaction_end";
@@ -138,6 +141,8 @@ export interface PromptConfig {
 export interface PromptBuildInput {
   cwd: string;
   tools: readonly ToolRuntime[];
+  skills?: readonly SkillMetadata[] | undefined;
+  skillPromptMaxBytes?: number | undefined;
   config?: PromptConfig | undefined;
 }
 
@@ -175,6 +180,8 @@ export interface AgentRuntimeConfig {
   eventLogPath?: string | undefined;
   session?: SessionManager | undefined;
   compaction?: Partial<CompactionSettings> | undefined;
+  mcp?: McpRuntimeConfig | undefined;
+  skills?: SkillRuntimeConfig | undefined;
 }
 
 export interface RunTurnParams {
@@ -183,6 +190,8 @@ export interface RunTurnParams {
   model: Model<any>;
   cwd: string;
   promptConfig?: PromptConfig | undefined;
+  skills?: readonly SkillMetadata[] | undefined;
+  skillPromptMaxBytes?: number | undefined;
   tools: ToolRuntime[];
   apiKey?: ApiKeyResolver | undefined;
   requestAuth?: RequestAuthResolver | undefined;

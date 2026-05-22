@@ -111,7 +111,9 @@ function createRuntime(
     ...(options.eventLogPath ? { eventLogPath: options.eventLogPath } : {}),
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     ...(session ? { session } : {}),
-    ...(options.compaction ? { compaction: options.compaction } : {})
+    ...(options.compaction ? { compaction: options.compaction } : {}),
+    ...(options.mcp ? { mcp: options.mcp } : {}),
+    ...(options.skills ? { skills: options.skills } : {})
   };
   return new AgentRuntime(config);
 }

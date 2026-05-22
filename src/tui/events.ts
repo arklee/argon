@@ -29,6 +29,14 @@ export class TuiEventRenderer {
       case "turn_start":
         this.line(dim(`\nargon`, this.color) + dim(` ${event.context.model.provider}/${event.context.model.id}`, this.color));
         break;
+      case "mcp_server_status":
+        this.closeStreamingBlocks();
+        if (event.status === "failed") {
+          this.line(`${yellow("mcp", this.color)} ${event.server} failed: ${event.errorMessage ?? "unknown error"}`);
+        } else {
+          this.line(dim(`mcp ${event.server} ${event.status}`, this.color));
+        }
+        break;
       case "compaction_start":
         this.closeStreamingBlocks();
         this.line(dim(`compacting ${event.messagesBefore} message(s), ${event.tokensBefore} token(s)`, this.color));
