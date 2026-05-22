@@ -3,6 +3,8 @@ import { loadUserSettings } from "../config/settings.js";
 import { isThinkingLevel, type ArgonThinkingLevel } from "../thinking.js";
 import { loadTuiConfig, type TuiConfig } from "./config.js";
 import type { CompactionSettings } from "../types.js";
+import type { McpRuntimeConfig } from "../mcp/config.js";
+import type { SkillRuntimeConfig } from "../skills/model.js";
 
 const DEFAULT_PROVIDER = "openai";
 const DEFAULT_MODEL = "gpt-5.2-codex";
@@ -26,6 +28,8 @@ export interface TuiOptions {
   sessionId?: string;
   reasoning?: ArgonThinkingLevel;
   compaction?: Partial<CompactionSettings>;
+  mcp?: McpRuntimeConfig;
+  skills?: SkillRuntimeConfig;
 }
 
 export interface ParsedTuiOptions {
@@ -242,6 +246,8 @@ function applyConfig(options: TuiOptions, config: TuiConfig): void {
   if (config.sessionId !== undefined) options.sessionId = config.sessionId;
   if (config.reasoning !== undefined) options.reasoning = config.reasoning;
   if (config.compaction !== undefined) options.compaction = config.compaction;
+  if (config.mcp !== undefined) options.mcp = config.mcp;
+  if (config.skills !== undefined) options.skills = config.skills;
 }
 
 function applyEnv(options: TuiOptions, env: NodeJS.ProcessEnv): void {

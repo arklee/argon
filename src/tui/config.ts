@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { isThinkingLevel, type ArgonThinkingLevel } from "../thinking.js";
 import type { CompactionSettings } from "../types.js";
+import type { McpRuntimeConfig, McpServerConfig } from "../mcp/config.js";
+import type { SkillRuntimeConfig } from "../skills/model.js";
 
 export const DEFAULT_CONFIG_FILES = ["argon.config.json", ".argon/settings.json", ".argon/model.json"] as const;
 
@@ -19,6 +21,8 @@ export interface TuiConfig {
   sessionId?: string;
   reasoning?: ArgonThinkingLevel;
   compaction?: Partial<CompactionSettings>;
+  mcp?: McpRuntimeConfig;
+  skills?: SkillRuntimeConfig;
 }
 
 export interface LoadedTuiConfig {
@@ -111,6 +115,12 @@ function normalizeConfig(value: unknown, baseDir: string): TuiConfig {
   const compaction = optionalCompaction(value, "compaction");
   if (compaction !== undefined) config.compaction = compaction;
 
+  const mcp = optionalMcpConfig(value, "mcp", baseDir);
+  if (mcp !== undefined) config.mcp = mcp;
+
+  const skills = optionalSkillConfig(value, "skills", baseDir);
+  if (skills !== undefined) config.skills = skills;
+
   return config;
 }
 
@@ -153,6 +163,91 @@ function optionalPositiveInteger(value: Record<string, unknown>, key: string): n
     throw new Error(`${key} must be a positive number`);
   }
   return Math.floor(candidate);
+}
+
+function optionalMcpConfig(value: Record<string, unknown>, key: string, baseDir: string): McpRuntimeConfig | undefined {
+  const candidate = value[key];
+  if (candidate === undefined) return undefined;
+  if (!isRecord(candidate)) throw new Error(`${key} must be an object`);
+  const config: McpRuntimeConfig = {};
+  const enabled = optionalBoolean(candidate, "enabled");
+  if (enabled !== undefined) config.enabled = enabled;
+  const startupTimeoutMs = optionalPositiveInteger(candidate, "startupTimeoutMs");
+  if (startupTimeoutMs !== undefined) config.startupTimeoutMs = startupTimeoutMs;
+  const toolTimeoutMs = optionalPositiveInteger(candidate, "toolTimeoutMs");
+  if (toolTimeoutMs !== undefined) config.toolTimeoutMs = toolTimeoutMs;
+  const servers = candidate.servers;
+  if (servers !== undefined) {
+    if (!isRecord(servers)) throw new Error("mcp.servers must be an object");
+    const parsedServers: Record<string, McpServerConfig> = {};
+    for (const [name, rawServer] of Object.entries(servers)) {
+      parsedServers[name] = normalizeMcpServerConfig(rawServer, `mcp.servers.${name}`, baseDir);
+    }
+    config.servers = parsedServers;
+  }
+  return config;
+}
+
+function normalizeMcpServerConfig(value: unknown, key: string, baseDir: string): McpServerConfig {
+  if (!isRecord(value)) throw new Error(`${key} must be an object`);
+  const command = optionalString(value, "command");
+  if (!command) throw new Error(`${key}.command must be a non-empty string`);
+  const config: McpServerConfig = { command };
+  if (Array.isArray(value.args) && value.args.every((arg) => typeof arg === "string")) config.args = value.args;
+  else if (value.args !== undefined) throw new Error(`${key}.args must be an array of strings`);
+  const cwd = optionalString(value, "cwd");
+  if (cwd !== undefined) config.cwd = resolvePath(baseDir, cwd);
+  if (value.env !== undefined) {
+    if (!isRecord(value.env)) throw new Error(`${key}.env must be an object`);
+    const env: Record<string, string> = {};
+    for (const [envKey, envValue] of Object.entries(value.env)) {
+      if (typeof envValue !== "string") throw new Error(`${key}.env.${envKey} must be a string`);
+      env[envKey] = envValue;
+    }
+    config.env = env;
+  }
+  const enabled = optionalBoolean(value, "enabled");
+  if (enabled !== undefined) config.enabled = enabled;
+  const required = optionalBoolean(value, "required");
+  if (required !== undefined) config.required = required;
+  const supportsParallelToolCalls = optionalBoolean(value, "supportsParallelToolCalls");
+  if (supportsParallelToolCalls !== undefined) config.supportsParallelToolCalls = supportsParallelToolCalls;
+  const startupTimeoutMs = optionalPositiveInteger(value, "startupTimeoutMs");
+  if (startupTimeoutMs !== undefined) config.startupTimeoutMs = startupTimeoutMs;
+  const toolTimeoutMs = optionalPositiveInteger(value, "toolTimeoutMs");
+  if (toolTimeoutMs !== undefined) config.toolTimeoutMs = toolTimeoutMs;
+  config.enabledTools = optionalStringArray(value, "enabledTools");
+  config.disabledTools = optionalStringArray(value, "disabledTools");
+  return config;
+}
+
+function optionalSkillConfig(value: Record<string, unknown>, key: string, baseDir: string): SkillRuntimeConfig | undefined {
+  const candidate = value[key];
+  if (candidate === undefined) return undefined;
+  if (Array.isArray(candidate)) {
+    if (!candidate.every((entry) => typeof entry === "string")) throw new Error(`${key} must be an array of strings or an object`);
+    return { roots: candidate.map((entry) => resolvePath(baseDir, entry)) };
+  }
+  if (!isRecord(candidate)) throw new Error(`${key} must be an array of strings or an object`);
+  const config: SkillRuntimeConfig = {};
+  const enabled = optionalBoolean(candidate, "enabled");
+  if (enabled !== undefined) config.enabled = enabled;
+  const roots = optionalStringArray(candidate, "roots");
+  if (roots !== undefined) config.roots = roots.map((root) => resolvePath(baseDir, root));
+  const disabled = optionalStringArray(candidate, "disabled");
+  if (disabled !== undefined) config.disabled = disabled;
+  const maxPromptBytes = optionalPositiveInteger(candidate, "maxPromptBytes");
+  if (maxPromptBytes !== undefined) config.maxPromptBytes = maxPromptBytes;
+  return config;
+}
+
+function optionalStringArray(value: Record<string, unknown>, key: string): string[] | undefined {
+  const candidate = value[key];
+  if (candidate === undefined) return undefined;
+  if (!Array.isArray(candidate) || !candidate.every((entry) => typeof entry === "string")) {
+    throw new Error(`${key} must be an array of strings`);
+  }
+  return candidate;
 }
 
 function resolvePath(baseDir: string, value: string): string {

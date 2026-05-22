@@ -15,6 +15,8 @@ export { buildStartupContext } from "./prompt/startup-context.js";
 export { AuthStorage, FileAuthStorageBackend, InMemoryAuthStorageBackend, getDefaultAuthPath } from "./auth/storage.js";
 export { ModelRegistry, getDefaultModelsPath, parseModelSpecifier } from "./model/registry.js";
 export { getUserSettingsPath, loadUserSettings, saveDefaultModel, saveDefaultReasoning } from "./config/settings.js";
+export * from "./mcp/index.js";
+export * from "./skills/index.js";
 export {
   THINKING_LEVELS,
   THINKING_LEVEL_DESCRIPTIONS,

@@ -25,6 +25,8 @@ export async function* runTurn(params: RunTurnParams): AsyncGenerator<AgentEvent
   const systemPrompt = promptManager.buildSystemPrompt({
     cwd: params.cwd,
     tools: params.tools,
+    skills: params.skills,
+    skillPromptMaxBytes: params.skillPromptMaxBytes,
     config: params.promptConfig
   });
   const turn: TurnContext = Object.freeze({

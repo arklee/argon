@@ -57,6 +57,22 @@ describe("PromptManager", () => {
     expect(prompt).toContain("verification status");
   });
 
+  it("includes Codex-style preamble and progress guidance", async () => {
+    const cwd = await tempDir();
+    const prompt = new PromptManager().buildSystemPrompt({
+      cwd,
+      tools: []
+    });
+
+    expect(prompt).toContain("# Preamble and Progress Updates");
+    expect(prompt).toContain("Before non-trivial or grouped tool calls, send a brief user-visible preamble");
+    expect(prompt).toContain("Group related actions into one preamble");
+    expect(prompt).toContain("For later tool calls in the same turn, connect the dots");
+    expect(prompt).toContain("Skip preambles for trivial single-file reads");
+    expect(prompt.indexOf("# Coding Behavior")).toBeLessThan(prompt.indexOf("# Preamble and Progress Updates"));
+    expect(prompt.indexOf("# Preamble and Progress Updates")).toBeLessThan(prompt.indexOf("# Environment Context"));
+  });
+
   it("orders AGENTS.md files from project root to cwd", async () => {
     const root = await tempDir();
     await mkdir(join(root, ".git"));
