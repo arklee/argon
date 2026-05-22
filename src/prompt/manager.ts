@@ -22,6 +22,15 @@ const DEFAULT_BEHAVIOR_RULES = [
   "Keep user-facing responses concise, with clear paths, changed behavior, and verification status."
 ];
 
+const DEFAULT_PREAMBLE_RULES = [
+  "Before non-trivial or grouped tool calls, send a brief user-visible preamble explaining what you are about to do.",
+  "Group related actions into one preamble instead of sending a separate note for each tool call.",
+  "Keep preambles concise: one or two sentences focused on immediate, tangible next steps.",
+  "For later tool calls in the same turn, connect the dots with what you have learned so far and what you will do next.",
+  "Skip preambles for trivial single-file reads or similarly tiny inspection steps unless they are part of a larger grouped action.",
+  "For longer tasks with many tool calls or multiple phases, provide occasional concise progress updates that summarize progress and next steps."
+];
+
 const AGENTS_PRECEDENCE_GUIDANCE = [
   "AGENTS.md files included below are ordered from repository root to the active cwd.",
   "More specific nested AGENTS.md instructions take precedence over broader ones when they conflict.",
@@ -36,6 +45,7 @@ export class PromptManager {
 
     sections.push(config.baseInstructions?.trim() || DEFAULT_BASE);
     sections.push(this.renderBehaviorRules(config));
+    sections.push(this.renderPreambleGuidance());
 
     const toolSection = this.renderToolGuidelines(input.tools);
     if (toolSection) sections.push(toolSection);
@@ -60,6 +70,10 @@ export class PromptManager {
       .filter((rule, index, all) => rule.length > 0 && all.indexOf(rule) === index);
 
     return ["# Coding Behavior", ...rules.map((rule) => `- ${rule}`)].join("\n");
+  }
+
+  private renderPreambleGuidance(): string {
+    return ["# Preamble and Progress Updates", ...DEFAULT_PREAMBLE_RULES.map((rule) => `- ${rule}`)].join("\n");
   }
 
   private renderToolGuidelines(tools: readonly ToolRuntime[]): string | undefined {

@@ -3,6 +3,13 @@
 Argon builds a flattened system prompt for each turn and executes collected tool calls after
 the assistant message ends.
 
+## Preamble and Progress Guidance
+
+The default system prompt asks the model to send brief user-visible preambles before
+non-trivial or grouped tool calls, and to provide occasional concise progress updates during
+longer multi-tool tasks. These are prompt-level assistant messages; the runtime and TUI do not
+synthesize them.
+
 ## Startup Context
 
 The prompt manager includes a bounded startup context by default. It contains the current
