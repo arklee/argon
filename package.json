@@ -1,12 +1,17 @@
 {
   "name": "argon-coding-agent",
   "version": "0.1.0",
-  "private": true,
+  "description": "A TypeScript coding agent runtime and TUI built on pi-ai and pi-tui.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arklee/Argon.git"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "argon": "./dist/tui/cli.js"
+    "argon": "dist/tui/cli.js"
   },
   "exports": {
     ".": {
@@ -14,6 +19,9 @@
       "import": "./dist/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "tui": "node dist/tui/cli.js",
