@@ -13,6 +13,7 @@ export interface SelectionItem {
   value: string;
   label: string;
   description?: string;
+  selected?: boolean;
 }
 
 export async function selectWithTui(title: string, items: SelectionItem[], theme: SelectListTheme): Promise<string | undefined> {
@@ -47,21 +48,23 @@ export class PickerComponent implements Component {
       theme,
       { minPrimaryColumnWidth: 28, maxPrimaryColumnWidth: 48 }
     );
+    const selectedIndex = items.findIndex((item) => item.selected);
+    if (selectedIndex >= 0) this.list.setSelectedIndex(selectedIndex);
     this.list.onSelect = (item) => this.onDone(item.value);
     this.list.onCancel = () => this.onDone(undefined);
   }
 
   render(width: number): string[] {
-    const contentWidth = Math.max(1, width - 4);
+    const contentWidth = Math.max(1, width - 2);
     const contentLines = [
-      this.theme.selectedText(this.title),
+      ` ${this.theme.selectedText(this.title)}`,
       "",
       ...this.list.render(contentWidth),
       "",
-      this.theme.scrollInfo("enter to select, esc to cancel")
+      ` ${this.theme.scrollInfo("enter to select, esc to cancel")}`
     ];
 
-    return renderModalBox(contentLines, width, this.theme.scrollInfo);
+    return renderInlinePanel(contentLines, width, this.theme.scrollInfo);
   }
 
   handleInput(data: string): void {
@@ -73,16 +76,14 @@ export class PickerComponent implements Component {
   }
 }
 
-function renderModalBox(lines: string[], width: number, border: (text: string) => string): string[] {
+function renderInlinePanel(lines: string[], width: number, border: (text: string) => string): string[] {
   if (width <= 4) return lines.map((line) => truncateToWidth(line, width, "", true));
 
-  const innerWidth = Math.max(1, width - 2);
-  const contentWidth = Math.max(1, innerWidth - 2);
-  const top = border(`╭${"─".repeat(innerWidth)}╮`);
-  const bottom = border(`╰${"─".repeat(innerWidth)}╯`);
-  const body = lines.map((line) => `${border("│")} ${padLine(line, contentWidth)} ${border("│")}`);
+  const contentWidth = Math.max(1, width);
+  const rule = border("─".repeat(width));
+  const body = lines.map((line) => padLine(line, contentWidth));
 
-  return [top, ...body, bottom];
+  return [rule, ...body, rule];
 }
 
 function padLine(line: string, width: number): string {

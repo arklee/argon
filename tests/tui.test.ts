@@ -27,6 +27,7 @@ import {
   retainReferencedAttachments
 } from "../src/tui/image-paste.js";
 import { parseTuiArgs } from "../src/tui/options.js";
+import { PickerComponent } from "../src/tui/selectors.js";
 import { createArgonTuiTheme } from "../src/tui/theme.js";
 import type { TurnContext } from "../src/types.js";
 
@@ -525,7 +526,7 @@ describe("Interactive TUI layout", () => {
     view.dispose();
   });
 
-  it("renders submitted user prompts as input boxes and omits you/assistant labels", () => {
+  it("renders submitted user prompts as background blocks and omits you/assistant labels", () => {
     const terminal = new FakeTerminal();
     const tui = new TUI(terminal);
     const theme = createArgonTuiTheme(false);
@@ -544,8 +545,9 @@ describe("Interactive TUI layout", () => {
     const renderedUser = stripAnsi(tui.children[editorIndex - 2]!.render(40).join("\n"));
     const renderedAssistant = stripAnsi(tui.children[editorIndex - 1]!.render(40).join("\n"));
 
-    expect(renderedUser).toContain("╭");
-    expect(renderedUser).toContain("❯ hello");
+    expect(renderedUser).toContain(" hello");
+    expect(renderedUser).not.toContain("╭");
+    expect(renderedUser).not.toContain("❯");
     expect(renderedUser).not.toContain("you");
     expect(renderedAssistant).toContain("hi there");
     expect(renderedAssistant).not.toContain("assistant");
@@ -580,6 +582,25 @@ describe("Interactive TUI layout", () => {
 
     view.finishRun("stop");
     view.dispose();
+  });
+
+  it("defaults picker selection to the item marked selected", () => {
+    const theme = createArgonTuiTheme(false);
+    const picker = new PickerComponent(
+      "Select Model",
+      [
+        { value: "first", label: "first", description: "provider" },
+        { value: "second", label: "second (current)", description: "provider", selected: true },
+        { value: "third", label: "third", description: "provider" }
+      ],
+      theme.editor.selectList,
+      () => {}
+    );
+
+    const rendered = stripAnsi(picker.render(80).join("\n"));
+
+    expect(rendered).toContain("→ second (current)");
+    expect(rendered).toContain("  first");
   });
 
   it("uses hanging indentation for wrapped status lines", () => {

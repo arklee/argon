@@ -2,7 +2,8 @@
 
 ## Turn Progress
 
-While a turn is running, the interactive TUI shows a live status row directly above the input box:
+While a turn is running, the interactive TUI shows a live status row directly above the two-line
+editor:
 
 ```text
 Working (0s - Ctrl+C to interrupt)
@@ -11,13 +12,16 @@ Working (0s - Ctrl+C to interrupt)
 When the turn ends, the same row becomes a static completion summary such as `Worked for 3s`,
 `Interrupted after 1s`, or `Failed after 2s (error)`.
 
-When the assistant streams ordinary text, Argon inserts a dim full-width divider immediately before
-that assistant text block. Tool-only model iterations do not render dividers.
+## Input And Selectors
 
-```text
-────────────────────────────────────────────────────────────────────────────────
-assistant
-```
+The active editor follows pi's compact shape: a horizontal rule above the draft, the draft line
+prefixed with `❯`, and a horizontal rule below it. It does not render rounded corners, vertical
+side borders, or extra left padding inside the draft area.
+
+Submitted user prompts render as full-width background blocks instead of prompt-shaped boxes. Slash
+commands such as `/model` and `/thinking` are recorded the same way when submitted, and their
+selection lists temporarily replace the editor area instead of opening as centered overlays. These
+lists open with the current model or thinking level selected.
 
 Tool calls render as one compact status entry. The entry shows the tool name directly, such as
 `read src/index.ts`, and is updated in place when the tool result arrives, such as

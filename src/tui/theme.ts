@@ -13,6 +13,8 @@ export interface ArgonTuiTheme {
     strikethrough(text: string): string;
     underline(text: string): string;
     yellow(text: string): string;
+    userMessageBg(text: string): string;
+    userMessageText(text: string): string;
   };
 }
 
@@ -26,7 +28,9 @@ export function createArgonTuiTheme(color: boolean): ArgonTuiTheme {
     red: (text: string) => wrap(text, color, 31),
     strikethrough: (text: string) => wrap(text, color, 9),
     underline: (text: string) => wrap(text, color, 4),
-    yellow: (text: string) => wrap(text, color, 33)
+    yellow: (text: string) => wrap(text, color, 33),
+    userMessageBg: (text: string) => wrapBackground(text, color, 236),
+    userMessageText: (text: string) => text
   };
 
   const selectList: SelectListTheme = {
@@ -66,4 +70,8 @@ export function createArgonTuiTheme(color: boolean): ArgonTuiTheme {
 
 function wrap(text: string, color: boolean, code: number): string {
   return color ? `\u001b[${code}m${text}\u001b[0m` : text;
+}
+
+function wrapBackground(text: string, color: boolean, code: number): string {
+  return color ? `\u001b[48;5;${code}m${text}\u001b[49m` : text;
 }

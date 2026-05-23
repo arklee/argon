@@ -1,4 +1,5 @@
 import {
+  Box,
   CombinedAutocompleteProvider,
   Editor,
   Input,
@@ -312,7 +313,7 @@ class ArgonInteractiveTui {
     private readonly modelRegistry: ModelRegistry
   ) {
     this.theme = createArgonTuiTheme(options.color && Boolean(process.stdout.isTTY));
-    this.editor = new ImagePasteEditor(this.tui, this.theme.editor, { paddingX: 1, autocompleteMaxVisible: 8 });
+    this.editor = new ImagePasteEditor(this.tui, this.theme.editor, { paddingX: 0, autocompleteMaxVisible: 8 });
     this.view = new PiTuiConversationView(this.tui, this.editor, this.theme, options);
     this.controller = new InteractiveEventController(this.view, {
       color: options.color && Boolean(process.stdout.isTTY),
@@ -405,6 +406,9 @@ class ArgonInteractiveTui {
     });
 
     if (command.handled) {
+      const prompt = rememberSubmittedPrompt(this.editor, trimmed);
+      if (prompt) this.view.addUserMessage(prompt);
+
       if (command.action === "exit") {
         await this.shutdown();
       } else if (command.action === "clear") {
@@ -592,7 +596,7 @@ class ArgonInteractiveTui {
       return;
     }
 
-    const selected = await this.pick("Select Model", modelItems(models, this.modelRegistry));
+    const selected = await this.pick("Select Model", modelItems(models, this.modelRegistry, this.runtime.getModel()));
     if (!selected) {
       this.view.addStatusMessage(this.theme.ansi.dim("Model selection cancelled."));
       return;
@@ -709,17 +713,34 @@ class ArgonInteractiveTui {
 
   private async pick(title: string, items: SelectionItem[]): Promise<string | undefined> {
     return new Promise((resolve) => {
-      const picker = new PickerComponent(title, items, this.theme.editor.selectList, (value) => {
-        handle.hide();
+      let settled = false;
+      const editorIndex = this.tui.children.indexOf(this.editor);
+      const insertAt = editorIndex === -1 ? this.tui.children.length : editorIndex;
+      if (editorIndex !== -1) {
+        this.tui.children.splice(editorIndex, 1);
+      }
+      const restoreEditor = () => {
+        const pickerIndex = this.tui.children.indexOf(picker);
+        if (pickerIndex !== -1) {
+          this.tui.children.splice(pickerIndex, 1);
+        }
+        if (!this.tui.children.includes(this.editor)) {
+          this.tui.children.splice(Math.min(insertAt, this.tui.children.length), 0, this.editor);
+        }
         this.tui.setFocus(this.editor);
+        this.view.requestRender();
+      };
+      const finish = (value: string | undefined) => {
+        if (settled) return;
+        settled = true;
+        restoreEditor();
         resolve(value);
+      };
+      const picker = new PickerComponent(title, items, this.theme.editor.selectList, (value) => {
+        finish(value);
       });
-      const handle = this.tui.showOverlay(picker, {
-        anchor: "center",
-        width: "90%",
-        margin: 1
-      });
-      handle.focus();
+      this.tui.children.splice(insertAt, 0, picker);
+      this.tui.setFocus(picker);
       this.view.requestRender();
     });
   }
@@ -769,22 +790,27 @@ class ImagePasteEditor extends Editor {
   private capturingPaste = false;
 
   override render(width: number): string[] {
-    const prompt = "❯";
+    const prompt = "❯ ";
     const promptWidth = visibleWidth(prompt);
     if (width <= 2 + promptWidth) return super.render(width);
 
-    const innerWidth = Math.max(1, width - 2);
-    const editorWidth = Math.max(1, innerWidth - promptWidth);
+    const editorWidth = Math.max(1, width - promptWidth);
     const editorLines = super.render(editorWidth);
     const topRuleIndex = 0;
     const bottomRuleIndex = findLastEditorRule(editorLines, editorWidth);
-    const contentLines = editorLines.filter((_, index) => index !== topRuleIndex && index !== bottomRuleIndex);
-    const body = contentLines.map((line, index) => `${index === 0 ? prompt : " ".repeat(promptWidth)}${padEditorLine(line, editorWidth)}`);
+    const draftLines = editorLines.slice(topRuleIndex + 1, bottomRuleIndex);
+    const autocompleteLines = editorLines.slice(bottomRuleIndex + 1);
+    const continuationPrefix = " ".repeat(promptWidth);
+    const autocompletePrefix = " ".repeat(Math.max(0, promptWidth - 1));
+    const body = [
+      ...draftLines.map((line, index) => `${index === 0 ? prompt : continuationPrefix}${padEditorLine(line, editorWidth)}`),
+      ...autocompleteLines.map((line) => `${autocompletePrefix}${padEditorLine(line, editorWidth)}`)
+    ];
 
     return [
-      this.borderColor(`╭${"─".repeat(innerWidth)}╮`),
-      ...body.map((line) => `${this.borderColor("│")}${line}${this.borderColor("│")}`),
-      this.borderColor(`╰${"─".repeat(innerWidth)}╯`)
+      padRuleLine(editorLines[topRuleIndex] ?? "", width, this.borderColor),
+      ...body,
+      padRuleLine(editorLines[bottomRuleIndex] ?? "", width, this.borderColor)
     ];
   }
 
@@ -848,26 +874,14 @@ function padEditorLine(line: string, width: number): string {
   return `${line}${" ".repeat(width - visible)}`;
 }
 
-function renderInputBox(text: string, width: number, borderColor: (text: string) => string): string[] {
-  if (width <= 4) return [truncateToWidth(text, width, "", true)];
-
-  const prompt = "❯";
-  const promptWidth = visibleWidth(prompt);
-  const innerWidth = Math.max(1, width - 2);
-  const showPrompt = innerWidth > promptWidth + 1;
-  const firstPrefix = showPrompt ? `${prompt} ` : "";
-  const continuationPrefix = " ".repeat(visibleWidth(firstPrefix));
-  const textWidth = Math.max(1, innerWidth - visibleWidth(firstPrefix));
-  const normalizedText = text.replace(/\t/g, "   ");
-  const wrappedLines = wrapTextWithAnsi(normalizedText, textWidth);
-  const contentLines = wrappedLines.length > 0 ? wrappedLines : [""];
-  const body = contentLines.map((line, index) => `${index === 0 ? firstPrefix : continuationPrefix}${padEditorLine(line, textWidth)}`);
-
-  return [
-    borderColor(`╭${"─".repeat(innerWidth)}╮`),
-    ...body.map((line) => `${borderColor("│")}${line}${borderColor("│")}`),
-    borderColor(`╰${"─".repeat(innerWidth)}╯`)
-  ];
+function padRuleLine(line: string, width: number, borderColor: (text: string) => string): string {
+  const plain = stripAnsi(line);
+  const visible = visibleWidth(line);
+  if (visible >= width) return truncateToWidth(line, width, "", true);
+  if (/^─+$/.test(plain) || /^─── [↑↓] \d+ more ─*$/.test(plain)) {
+    return borderColor(`${plain}${"─".repeat(width - visible)}`);
+  }
+  return `${line}${" ".repeat(width - visible)}`;
 }
 
 function stripAnsi(text: string): string {
@@ -906,16 +920,27 @@ class TextInputComponent implements Component {
 }
 
 class SubmittedInputComponent implements Component {
+  private readonly box: Box;
+
   constructor(
     private readonly text: string,
-    private readonly borderColor: (text: string) => string
-  ) {}
-
-  render(width: number): string[] {
-    return renderInputBox(this.text, width, this.borderColor);
+    theme: ArgonTuiTheme
+  ) {
+    this.box = new Box(1, 1, theme.ansi.userMessageBg);
+    this.box.addChild(
+      new Markdown(text, 0, 0, theme.markdown, {
+        color: theme.ansi.userMessageText
+      })
+    );
   }
 
-  invalidate(): void {}
+  render(width: number): string[] {
+    return this.box.render(width);
+  }
+
+  invalidate(): void {
+    this.box.invalidate();
+  }
 }
 
 export class PiTuiConversationView implements InteractiveTuiView {
@@ -943,7 +968,7 @@ export class PiTuiConversationView implements InteractiveTuiView {
   }
 
   addUserMessage(text: string): void {
-    this.addComponent(new SubmittedInputComponent(text, this.theme.editor.borderColor));
+    this.addComponent(new SubmittedInputComponent(text, this.theme));
   }
 
   addAssistantMessage(): MutableTuiMessage {
@@ -1244,13 +1269,17 @@ function treeItems(rows: SessionTreeNode[]): SelectionItem[] {
   }));
 }
 
-function modelItems(models: Model<any>[], registry: ModelRegistry): SelectionItem[] {
+function modelItems(models: Model<any>[], registry: ModelRegistry, current?: Model<any>): SelectionItem[] {
   return models
-    .map((model) => ({
-      value: `${model.provider}/${model.id}`,
-      label: model.id,
-      description: `${registry.getProviderDisplayName(model.provider)}  ${model.contextWindow ?? "?"} ctx`
-    }))
+    .map((model) => {
+      const selected = current?.provider === model.provider && current.id === model.id;
+      return {
+        value: `${model.provider}/${model.id}`,
+        label: selected ? `${model.id} (current)` : model.id,
+        description: `${registry.getProviderDisplayName(model.provider)}  ${model.contextWindow ?? "?"} ctx`,
+        selected
+      };
+    })
     .sort((a, b) => `${a.description} ${a.label}`.localeCompare(`${b.description} ${b.label}`));
 }
 
@@ -1258,7 +1287,8 @@ function thinkingItems(levels: ArgonThinkingLevel[], current: ArgonThinkingLevel
   return levels.map((level) => ({
     value: level,
     label: level === current ? `${level} (current)` : level,
-    description: THINKING_LEVEL_DESCRIPTIONS[level]
+    description: THINKING_LEVEL_DESCRIPTIONS[level],
+    selected: level === current
   }));
 }
 
