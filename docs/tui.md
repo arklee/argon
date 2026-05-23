@@ -19,9 +19,13 @@ prefixed with `❯`, and a horizontal rule below it. It does not render rounded 
 side borders, or extra left padding inside the draft area.
 
 Submitted user prompts render as full-width background blocks instead of prompt-shaped boxes. Slash
-commands such as `/model` and `/thinking` are recorded the same way when submitted, and their
-selection lists temporarily replace the editor area instead of opening as centered overlays. These
-lists open with the current model or thinking level selected.
+commands such as `/status`, `/model`, and `/thinking` do not add a submitted-command block to the
+visible conversation; only their output is shown. Selection lists temporarily replace the editor
+area instead of opening as centered overlays, and they open with the current model or thinking level
+selected.
+
+Status-style command output uses compact multi-line label/value rows instead of a single long
+`key=value` line, so long paths and session IDs remain readable.
 
 Tool calls render as one compact status entry. The entry shows the tool name directly, such as
 `read src/index.ts`, and is updated in place when the tool result arrives, such as

@@ -238,15 +238,13 @@ export function resolveSlashCommand(input: string, context: SlashCommandContext)
       return {
         handled: true,
         action: "message",
-        message: `model=${context.provider}/${context.modelId} thinking=${context.thinkingLevel} cwd=${context.cwd} messages=${context.messageCount}${context.sessionId ? ` session=${context.sessionId}` : ""}${context.configPath ? ` config=${context.configPath}` : ""}`
+        message: renderStatusCommandMessage(context)
       };
     case "/session":
       return {
         handled: true,
         action: "message",
-        message: context.sessionFile
-          ? `session=${context.sessionId ?? "(unknown)"} file=${context.sessionFile} messages=${context.messageCount}`
-          : "session persistence is disabled"
+        message: renderSessionCommandMessage(context)
       };
     case "/resume":
       return { handled: true, action: "resume" };
@@ -275,6 +273,32 @@ export function resolveSlashCommand(input: string, context: SlashCommandContext)
       }
       return { handled: false };
   }
+}
+
+function renderStatusCommandMessage(context: SlashCommandContext): string {
+  const rows: [string, string][] = [
+    ["Model", `${context.provider}/${context.modelId}`],
+    ["Thinking", context.thinkingLevel],
+    ["Messages", String(context.messageCount)],
+    ["CWD", context.cwd]
+  ];
+  if (context.sessionId) rows.push(["Session", context.sessionId]);
+  if (context.configPath) rows.push(["Config", context.configPath]);
+  return renderCommandTable("Status", rows);
+}
+
+function renderSessionCommandMessage(context: SlashCommandContext): string {
+  if (!context.sessionFile) return "Session\n  Persistence  disabled";
+  return renderCommandTable("Session", [
+    ["ID", context.sessionId ?? "(unknown)"],
+    ["Messages", String(context.messageCount)],
+    ["File", context.sessionFile]
+  ]);
+}
+
+function renderCommandTable(title: string, rows: readonly (readonly [string, string])[]): string {
+  const labelWidth = rows.reduce((width, [label]) => Math.max(width, label.length), 0);
+  return [title, ...rows.map(([label, value]) => `  ${label.padEnd(labelWidth)}  ${value}`)].join("\n");
 }
 
 export function createInteractiveRunOptions(options: TuiOptions): RunOptions {
@@ -406,9 +430,6 @@ class ArgonInteractiveTui {
     });
 
     if (command.handled) {
-      const prompt = rememberSubmittedPrompt(this.editor, trimmed);
-      if (prompt) this.view.addUserMessage(prompt);
-
       if (command.action === "exit") {
         await this.shutdown();
       } else if (command.action === "clear") {

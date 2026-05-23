@@ -230,9 +230,16 @@ describe("Interactive TUI commands", () => {
     expect(resolveSlashCommand("/status", context)).toMatchObject({
       handled: true,
       action: "message",
-      message: expect.stringContaining("messages=4")
+      message: expect.stringContaining("Messages  4")
     });
-    expect(resolveSlashCommand("/session", context)).toMatchObject({ handled: true, action: "message" });
+    expect(resolveSlashCommand("/status", context)).toMatchObject({
+      message: expect.stringContaining("Model     openai/gpt-5.2-codex")
+    });
+    expect(resolveSlashCommand("/session", context)).toMatchObject({
+      handled: true,
+      action: "message",
+      message: "Session\n  Persistence  disabled"
+    });
     expect(resolveSlashCommand("/model", context)).toMatchObject({ handled: true, action: "model" });
     expect(resolveSlashCommand("/thinking", context)).toMatchObject({ handled: true, action: "thinking" });
     expect(resolveSlashCommand("/reasoning", context)).toMatchObject({ handled: true, action: "thinking" });
