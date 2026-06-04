@@ -1,5 +1,11 @@
 # Argon TUI
 
+## Startup Header
+
+On a fresh interactive session, Argon renders a compact startup header before the editor. The header
+shows the active model, reasoning level, cwd, and the most useful slash commands. If a persisted
+session is resumed, the header is replaced by the restored transcript.
+
 ## Turn Progress
 
 While a turn is running, the interactive TUI shows a live status row directly above the two-line
@@ -27,13 +33,22 @@ selected.
 Status-style command output uses compact multi-line label/value rows instead of a single long
 `key=value` line, so long paths and session IDs remain readable.
 
-Tool calls render as one compact status entry. The entry shows the tool name directly, such as
-`read src/index.ts`, and is updated in place when the tool result arrives, such as
-`read src/index.ts hello world`. Large parameters like file contents and edit replacement texts are
-hidden from the compact status line.
+Assistant text starts with a thin `assistant` divider with vertical breathing room above and below,
+so streamed assistant content is visually separate from submitted user prompts and tool activity.
 
-The assistant divider is driven by visible `message_delta` text events. It is UI telemetry only;
-it is not added to the model transcript or resumable session context.
+Tool calls use Codex-style action categories instead of raw tool names:
+
+- `read`, `ls`, and `grep` render as `Exploring` / `Explored` with a tree detail such as
+  `Read src/index.ts`, `List src/tui`, or `Search renderToolStatus in src`.
+  Consecutive exploration tools share one `Explored` group, matching Codex's transcript style.
+- `bash` renders as `Running` / `Ran` / `Failed` with a compact command and bounded output summary.
+- `write` and `edit` render as file mutation actions: `Writing`, `Wrote`, `Editing`, or `Edited`.
+- MCP tools render as `Calling` / `Called` with `server.tool({...})` invocation text.
+- Unknown dynamic tools fall back to `Calling` / `Called` plus compact arguments.
+
+Large parameters like file contents and edit replacement texts are hidden from the status line. The
+assistant divider and tool status rows are UI telemetry only; they are not added to the model
+transcript or resumable session context.
 
 ## Subscription Login
 

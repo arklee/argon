@@ -11,37 +11,37 @@ async function tempDir(): Promise<string> {
 }
 
 async function writeMcpServer(dir: string): Promise<string> {
-  const path = join(dir, "server.py");
+  const path = join(dir, "server.mjs");
   await writeFile(
     path,
     `
-import json
-import sys
+import readline from "node:readline";
 
-def respond(id, result):
-    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": id, "result": result}) + "\\n")
-    sys.stdout.flush()
+function respond(id, result) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+}
 
-for line in sys.stdin:
-    if not line.strip():
-        continue
-    message = json.loads(line)
-    if "id" not in message:
-        continue
-    if message.get("method") == "initialize":
-        respond(message["id"], {"protocolVersion": "2025-06-18", "capabilities": {}, "serverInfo": {"name": "fake"}})
-    elif message.get("method") == "tools/list":
-        respond(message["id"], {
-            "tools": [{
-                "name": "echo",
-                "description": "Echo a message",
-                "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}
-            }]
-        })
-    elif message.get("method") == "tools/call":
-        respond(message["id"], {"content": [{"type": "text", "text": "echo:" + message["params"]["arguments"]["message"]}]})
-    else:
-        respond(message["id"], {})
+const input = readline.createInterface({ input: process.stdin });
+input.on("line", (line) => {
+  if (!line.trim()) return;
+  const message = JSON.parse(line);
+  if (!("id" in message)) return;
+  if (message.method === "initialize") {
+    respond(message.id, { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "fake" } });
+  } else if (message.method === "tools/list") {
+    respond(message.id, {
+      tools: [{
+        name: "echo",
+        description: "Echo a message",
+        inputSchema: { type: "object", properties: { message: { type: "string" } }, required: ["message"] }
+      }]
+    });
+  } else if (message.method === "tools/call") {
+    respond(message.id, { content: [{ type: "text", text: "echo:" + message.params.arguments.message }] });
+  } else {
+    respond(message.id, {});
+  }
+});
 `,
     "utf8"
   );
@@ -55,7 +55,7 @@ describe("McpConnectionManager", () => {
     const manager = new McpConnectionManager({
       servers: {
         fake: {
-          command: "python3",
+          command: process.execPath,
           args: [serverPath],
           startupTimeoutMs: 2_000,
           toolTimeoutMs: 2_000

@@ -219,7 +219,7 @@ describe("TUI options", () => {
 });
 
 describe("TUI event rendering", () => {
-  it("renders compact tool result status", () => {
+  it("renders classified tool result status", () => {
     const toolCall = fakeToolCall("read", { path: "note.txt" });
     const result: ToolResultMessage = {
       role: "toolResult",
@@ -230,7 +230,7 @@ describe("TUI event rendering", () => {
       timestamp: Date.now()
     };
 
-    expect(stripAnsi(renderToolStatus(toolCall, result, true))).toContain("* read note.txt\n  hello world");
+    expect(stripAnsi(renderToolStatus(toolCall, result, true))).toBe(" • Explored\n   └ Read note.txt - 2 lines");
   });
 
   it("renders concise tool call summaries without large json arguments", () => {
@@ -238,9 +238,9 @@ describe("TUI event rendering", () => {
     const editCall = fakeToolCall("edit", { path: "src/app.ts", oldText: "before", newText: "after" });
     const grepCall = fakeToolCall("grep", { pattern: "AgentEvent", path: "src" });
 
-    expect(stripAnsi(renderToolStatus(writeCall, undefined, true))).toBe(" * write src/app.ts");
-    expect(stripAnsi(renderToolStatus(editCall, undefined, true))).toBe(" * edit src/app.ts");
-    expect(stripAnsi(renderToolStatus(grepCall, undefined, true))).toBe(" * grep AgentEvent in src");
+    expect(stripAnsi(renderToolStatus(writeCall, undefined, true))).toBe(" • Writing src/app.ts");
+    expect(stripAnsi(renderToolStatus(editCall, undefined, true))).toBe(" • Editing src/app.ts");
+    expect(stripAnsi(renderToolStatus(grepCall, undefined, true))).toBe(" • Exploring\n   └ Search AgentEvent in src");
   });
 });
 
@@ -428,7 +428,7 @@ describe("Interactive TUI event controller", () => {
     controller.render({ type: "tool_result", toolCall, result: fakeToolResult(toolCall, "hello\nworld", false) });
     controller.render({ type: "turn_end", context: fakeTurnContext(), reason: "max_iterations", iterations: 3 });
 
-    expect(view.statuses).toEqual([" * read note.txt\n  hello world", "  max_iterations after 3 iteration(s)"]);
+    expect(view.statuses).toEqual([" • Explored\n   └ Read note.txt - 2 lines", "  max_iterations after 3 iteration(s)"]);
     expect(view.statuses.join("\n")).toContain("max_iterations after 3 iteration(s)");
     expect(view.finishedReasons).toEqual(["max_iterations"]);
   });
@@ -441,7 +441,30 @@ describe("Interactive TUI event controller", () => {
     const toolCall = fakeToolCall("read", { path: "note.txt" });
     controller.render({ type: "tool_call_end", contentIndex: 0, toolCall, partial: fakeAssistant() });
 
-    expect(view.components).toEqual(["status: * read note.txt"]);
+    expect(view.components).toEqual(["status: • Exploring\n   └ Read note.txt"]);
+  });
+
+  it("groups consecutive exploration tools in one status component", () => {
+    const view = new FakeInteractiveView();
+    const controller = new InteractiveEventController(view, { color: false, showThinking: false });
+    const listCall = fakeToolCall("ls", { path: "src" });
+    const readCall = fakeToolCall("read", { path: "package.json" });
+    const bashCall = fakeToolCall("bash", { command: "echo done" });
+    const grepCall = fakeToolCall("grep", { pattern: "export", path: "src/index.ts" });
+
+    controller.render({ type: "tool_call_end", contentIndex: 0, toolCall: listCall, partial: fakeAssistant() });
+    controller.render({ type: "tool_call_end", contentIndex: 1, toolCall: readCall, partial: fakeAssistant() });
+    controller.render({ type: "tool_result", toolCall: listCall, result: fakeToolResult(listCall, "file app.ts\nfile events.ts", false) });
+    controller.render({ type: "tool_result", toolCall: readCall, result: fakeToolResult(readCall, "{\n  \"name\": \"argon\"\n}", false) });
+    controller.render({ type: "tool_call_end", contentIndex: 2, toolCall: bashCall, partial: fakeAssistant() });
+    controller.render({ type: "tool_call_end", contentIndex: 3, toolCall: grepCall, partial: fakeAssistant() });
+
+    expect(view.components).toEqual([
+      "status: • Exploring\n   └ List src",
+      "status: • Running echo done",
+      "status: • Exploring\n   └ Search export in src/index.ts"
+    ]);
+    expect(view.statuses[0]).toBe(" • Explored\n   └ List src - 2 entries\n     Read package.json - 3 lines");
   });
 
   it("keeps streamed tool calls between surrounding assistant text", () => {
@@ -469,8 +492,8 @@ describe("Interactive TUI event controller", () => {
     });
 
     expect(view.assistants.map((message) => message.text)).toEqual(["before ", "after"]);
-    expect(view.components).toEqual(["assistant:0", "status: * read note.txt", "assistant:1"]);
-    expect(view.statuses).toEqual([" * read note.txt\n  hello"]);
+    expect(view.components).toEqual(["assistant:0", "status: • Exploring\n   └ Read note.txt", "assistant:1"]);
+    expect(view.statuses).toEqual([" • Explored\n   └ Read note.txt - 5 chars"]);
   });
 
   it("starts a fresh assistant component after message end", () => {
@@ -527,6 +550,33 @@ describe("Interactive TUI event controller", () => {
 });
 
 describe("Interactive TUI layout", () => {
+  it("renders a startup header before any transcript messages", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal);
+    const theme = createArgonTuiTheme(false);
+    const editor = new Editor(tui, theme.editor);
+    const view = new PiTuiConversationView(tui, editor, theme, {
+      provider: "faux",
+      modelId: "faux",
+      cwd: "/tmp/project",
+      reasoning: "high",
+      color: false
+    } as any);
+
+    view.showWelcome();
+
+    const editorIndex = tui.children.indexOf(editor);
+    const rendered = stripAnsi(tui.children[editorIndex - 1]!.render(80).join("\n"));
+    expect(rendered).toContain("Argon");
+    expect(rendered).toContain("model:");
+    expect(rendered).toContain("faux/faux high");
+    expect(rendered).toContain("directory:");
+    expect(rendered).toContain("/tmp/project");
+    expect(rendered).toContain("/help");
+
+    view.dispose();
+  });
+
   it("keeps concise help and model metadata directly below the editor", () => {
     const terminal = new FakeTerminal();
     const tui = new TUI(terminal);
@@ -566,7 +616,7 @@ describe("Interactive TUI layout", () => {
     view.dispose();
   });
 
-  it("renders submitted user prompts as background blocks and omits you/assistant labels", () => {
+  it("renders submitted user prompts as background blocks and separates assistant text", () => {
     const terminal = new FakeTerminal();
     const tui = new TUI(terminal);
     const theme = createArgonTuiTheme(false);
@@ -582,15 +632,18 @@ describe("Interactive TUI layout", () => {
     view.addAssistantMessage().append("hi there");
 
     const editorIndex = tui.children.indexOf(editor);
-    const renderedUser = stripAnsi(tui.children[editorIndex - 2]!.render(40).join("\n"));
+    const renderedUser = stripAnsi(tui.children[editorIndex - 3]!.render(40).join("\n"));
+    const renderedDivider = stripAnsi(tui.children[editorIndex - 2]!.render(40).join("\n"));
     const renderedAssistant = stripAnsi(tui.children[editorIndex - 1]!.render(40).join("\n"));
 
     expect(renderedUser).toContain(" hello");
     expect(renderedUser).not.toContain("╭");
     expect(renderedUser).not.toContain("❯");
     expect(renderedUser).not.toContain("you");
+    expect(renderedDivider).toContain("assistant");
+    expect(renderedDivider.split("\n")[0]).toBe("");
+    expect(renderedDivider.split("\n").at(-1)).toBe("");
     expect(renderedAssistant).toContain("hi there");
-    expect(renderedAssistant).not.toContain("assistant");
 
     view.dispose();
   });
@@ -621,6 +674,35 @@ describe("Interactive TUI layout", () => {
     expect(renderedPrevious).toContain("assistant text");
 
     view.finishRun("stop");
+    view.dispose();
+  });
+
+  it("groups exploration tools when replaying persisted messages", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal);
+    const theme = createArgonTuiTheme(false);
+    const editor = new Editor(tui, theme.editor);
+    const view = new PiTuiConversationView(tui, editor, theme, {
+      provider: "faux",
+      modelId: "faux",
+      cwd: "/tmp/project",
+      color: false
+    } as any);
+    const listCall = fakeToolCall("ls", { path: "src" });
+    const readCall = fakeToolCall("read", { path: "package.json" });
+
+    view.renderMessages([
+      { ...fakeAssistant(), content: [listCall, readCall] },
+      fakeToolResult(listCall, "file app.ts\nfile events.ts", false),
+      fakeToolResult(readCall, "{\n  \"name\": \"argon\"\n}", false)
+    ]);
+
+    const editorIndex = tui.children.indexOf(editor);
+    const rendered = stripAnsi(tui.children[editorIndex - 1]!.render(80).join("\n"));
+    expect(rendered).toContain("Explored");
+    expect(rendered).toContain("List src - 2 entries");
+    expect(rendered).toContain("Read package.json - 3 lines");
+
     view.dispose();
   });
 
@@ -696,7 +778,7 @@ describe("Interactive TUI layout", () => {
     const statusLines = tui.children[editorIndex - 1]!.render(40).map((line) => stripAnsi(line).trimEnd());
 
     expect(assistantLines).toEqual(["  hello", ""]);
-    expect(statusLines[0]).toBe(" * read note.txt");
+    expect(statusLines).toEqual([" • Exploring", "   └ Read note.txt"]);
 
     view.dispose();
   });

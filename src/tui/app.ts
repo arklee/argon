@@ -30,7 +30,14 @@ import {
   type ArgonThinkingLevel
 } from "../thinking.js";
 import type { AgentEvent, AgentMessage, RunOptions, TurnEndReason, UserInput } from "../types.js";
-import { compactText, renderToolResult, renderToolStatus } from "./events.js";
+import {
+  compactText,
+  isExplorationToolCall,
+  renderExplorationToolGroupStatus,
+  renderToolResult,
+  renderToolStatus,
+  type ToolStatusItem
+} from "./events.js";
 import { createArgonTuiTheme, type ArgonTuiTheme } from "./theme.js";
 import type { TuiOptions } from "./options.js";
 import { PickerComponent, type SelectionItem } from "./selectors.js";
@@ -112,10 +119,22 @@ export interface InteractiveTuiView {
 
 const TOOL_STATUS_OPTIONS: StatusMessageOptions = { paddingX: 0 };
 
+interface ExplorationStatusGroup {
+  entries: ToolStatusItem[];
+  message: MutableStatusMessage;
+}
+
+interface PendingToolStatus {
+  entry: ToolStatusItem;
+  message: MutableStatusMessage;
+  group?: ExplorationStatusGroup | undefined;
+}
+
 export class InteractiveEventController {
   private currentAssistant: MutableTuiMessage | undefined;
   private currentThinking: MutableTuiMessage | undefined;
-  private readonly pendingToolStatuses = new Map<string, { toolCall: ToolCall; message: MutableStatusMessage }>();
+  private currentExplorationGroup: ExplorationStatusGroup | undefined;
+  private readonly pendingToolStatuses = new Map<string, PendingToolStatus>();
 
   constructor(
     private readonly view: InteractiveTuiView,
@@ -125,6 +144,7 @@ export class InteractiveEventController {
   beginRun(prompt: string): void {
     this.currentAssistant = undefined;
     this.currentThinking = undefined;
+    this.currentExplorationGroup = undefined;
     this.pendingToolStatuses.clear();
     this.view.addUserMessage(prompt);
     this.view.setRunning(true);
@@ -164,17 +184,19 @@ export class InteractiveEventController {
         break;
       case "tool_call_end":
         this.closeStreamingBlocks();
-        this.pendingToolStatuses.set(event.toolCall.id, {
-          toolCall: event.toolCall,
-          message: this.view.addMutableStatusMessage(renderToolStatus(event.toolCall, undefined, this.options.color), TOOL_STATUS_OPTIONS)
-        });
+        this.addToolStatus(event.toolCall);
         break;
       case "tool_result":
         this.closeStreamingBlocks();
         {
           const pending = this.pendingToolStatuses.get(event.result.toolCallId);
           if (pending) {
-            pending.message.setText(renderToolStatus(pending.toolCall, event.result, this.options.color));
+            pending.entry.result = event.result;
+            pending.message.setText(
+              pending.group
+                ? renderExplorationToolGroupStatus(pending.group.entries, this.options.color)
+                : renderToolStatus(pending.entry.toolCall, event.result, this.options.color)
+            );
             this.pendingToolStatuses.delete(event.result.toolCallId);
           } else {
             this.view.addStatusMessage(renderToolStatus(event.toolCall, event.result, this.options.color), TOOL_STATUS_OPTIONS);
@@ -186,6 +208,7 @@ export class InteractiveEventController {
       case "turn_end":
         this.closeStreamingBlocks();
         this.pendingToolStatuses.clear();
+        this.currentExplorationGroup = undefined;
         this.view.finishRun(event.reason);
         if (event.reason !== "stop" && event.reason !== "aborted") {
           this.view.addStatusMessage(`  ${event.reason} after ${event.iterations} iteration(s)`);
@@ -193,6 +216,7 @@ export class InteractiveEventController {
         break;
       case "error":
         this.closeStreamingBlocks();
+        this.currentExplorationGroup = undefined;
         this.view.addStatusMessage(`error ${event.error.message}`);
         break;
       default:
@@ -204,6 +228,9 @@ export class InteractiveEventController {
 
   private assistantMessage(): MutableTuiMessage {
     if (!this.currentAssistant) {
+      this.currentThinking?.finalize?.();
+      this.currentThinking = undefined;
+      this.currentExplorationGroup = undefined;
       this.currentAssistant = this.view.addAssistantMessage();
     }
     return this.currentAssistant;
@@ -211,9 +238,38 @@ export class InteractiveEventController {
 
   private thinkingMessage(): MutableTuiMessage {
     if (!this.currentThinking) {
+      this.currentAssistant?.finalize?.();
+      this.currentAssistant = undefined;
+      this.currentExplorationGroup = undefined;
       this.currentThinking = this.view.addThinkingMessage();
     }
     return this.currentThinking;
+  }
+
+  private addToolStatus(toolCall: ToolCall): void {
+    const entry: ToolStatusItem = { toolCall };
+
+    if (!isExplorationToolCall(toolCall)) {
+      this.currentExplorationGroup = undefined;
+      const message = this.view.addMutableStatusMessage(renderToolStatus(toolCall, undefined, this.options.color), TOOL_STATUS_OPTIONS);
+      this.pendingToolStatuses.set(toolCall.id, { entry, message });
+      return;
+    }
+
+    if (!this.currentExplorationGroup) {
+      const entries = [entry];
+      const message = this.view.addMutableStatusMessage(renderExplorationToolGroupStatus(entries, this.options.color), TOOL_STATUS_OPTIONS);
+      this.currentExplorationGroup = { entries, message };
+    } else {
+      this.currentExplorationGroup.entries.push(entry);
+      this.currentExplorationGroup.message.setText(renderExplorationToolGroupStatus(this.currentExplorationGroup.entries, this.options.color));
+    }
+
+    this.pendingToolStatuses.set(toolCall.id, {
+      entry,
+      message: this.currentExplorationGroup.message,
+      group: this.currentExplorationGroup
+    });
   }
 
   private closeStreamingBlocks(): void {
@@ -964,6 +1020,62 @@ class SubmittedInputComponent implements Component {
   }
 }
 
+class AssistantDividerComponent implements Component {
+  constructor(private readonly theme: ArgonTuiTheme) {}
+
+  render(width: number): string[] {
+    if (width <= 0) return [];
+    const label = ` ${this.theme.ansi.green("assistant")} `;
+    const labelWidth = visibleWidth(label);
+    if (width <= labelWidth + 2) return ["", truncateToWidth(label.trim(), width, "", true), ""];
+
+    const left = this.theme.ansi.dim("──");
+    const rightWidth = Math.max(0, width - visibleWidth(left) - labelWidth);
+    return ["", `${left}${label}${this.theme.ansi.dim("─".repeat(rightWidth))}`, ""];
+  }
+
+  invalidate(): void {}
+}
+
+class WelcomeComponent implements Component {
+  constructor(
+    private readonly theme: ArgonTuiTheme,
+    private readonly options: TuiOptions
+  ) {}
+
+  render(width: number): string[] {
+    if (width <= 0) return [];
+    if (width < 16) return [truncateToWidth(this.theme.ansi.bold("Argon"), width, "", true)];
+
+    const innerWidth = Math.max(1, Math.min(64, width - 4));
+    const line = (content = "") => {
+      const clipped = truncateToWidth(content, innerWidth, "", true);
+      const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
+      return `${this.theme.ansi.dim("│ ")}${clipped}${padding}${this.theme.ansi.dim(" │")}`;
+    };
+    const rule = (left: string, right: string) => this.theme.ansi.dim(`${left}${"─".repeat(innerWidth + 2)}${right}`);
+    const labelWidth = 10;
+    const row = (label: string, value: string) => `${this.theme.ansi.dim(label.padEnd(labelWidth))} ${value}`;
+    const thinking = currentThinkingLevel(this.options.reasoning);
+    const model = `${this.options.provider}/${this.options.modelId} ${thinking}`;
+    const cwd = truncateToWidth(this.options.cwd, Math.max(1, innerWidth - labelWidth - 1), "", true);
+
+    return [
+      rule("╭", "╮"),
+      line(`${this.theme.ansi.dim(">_ ")}${this.theme.ansi.bold("Argon")}`),
+      line(),
+      line(row("model:", model)),
+      line(row("directory:", cwd)),
+      line(row("commands:", "/help  /status  /model  /thinking")),
+      line(),
+      line(this.theme.ansi.dim("Describe a task to start.")),
+      rule("╰", "╯")
+    ];
+  }
+
+  invalidate(): void {}
+}
+
 export class PiTuiConversationView implements InteractiveTuiView {
   private readonly footer: TuiFooterComponent;
   private readonly messageComponents: Component[] = [];
@@ -985,7 +1097,7 @@ export class PiTuiConversationView implements InteractiveTuiView {
   }
 
   showWelcome(): void {
-    this.addStatusMessage(this.theme.ansi.dim("Argon TUI ready."));
+    this.addComponent(new WelcomeComponent(this.theme, this.options));
   }
 
   addUserMessage(text: string): void {
@@ -993,6 +1105,7 @@ export class PiTuiConversationView implements InteractiveTuiView {
   }
 
   addAssistantMessage(): MutableTuiMessage {
+    this.addAssistantDivider();
     return this.addMutableMarkdown("");
   }
 
@@ -1017,26 +1130,59 @@ export class PiTuiConversationView implements InteractiveTuiView {
 
   renderMessages(messages: AgentMessage[]): void {
     this.clearMessages();
-    const pendingToolStatuses = new Map<string, { toolCall: ToolCall; message: MutableStatusMessage }>();
+    const pendingToolStatuses = new Map<string, PendingToolStatus>();
+    let currentExplorationGroup: ExplorationStatusGroup | undefined;
+
+    const addToolStatus = (toolCall: ToolCall) => {
+      const entry: ToolStatusItem = { toolCall };
+      const color = this.options.color && Boolean(process.stdout.isTTY);
+
+      if (!isExplorationToolCall(toolCall)) {
+        currentExplorationGroup = undefined;
+        const message = this.addMutableStatusMessage(renderToolStatus(toolCall, undefined, color), TOOL_STATUS_OPTIONS);
+        pendingToolStatuses.set(toolCall.id, { entry, message });
+        return;
+      }
+
+      if (!currentExplorationGroup) {
+        const entries = [entry];
+        const message = this.addMutableStatusMessage(renderExplorationToolGroupStatus(entries, color), TOOL_STATUS_OPTIONS);
+        currentExplorationGroup = { entries, message };
+      } else {
+        currentExplorationGroup.entries.push(entry);
+        currentExplorationGroup.message.setText(renderExplorationToolGroupStatus(currentExplorationGroup.entries, color));
+      }
+
+      pendingToolStatuses.set(toolCall.id, {
+        entry,
+        message: currentExplorationGroup.message,
+        group: currentExplorationGroup
+      });
+    };
+
     for (const message of messages) {
       if (message.role === "user") {
+        currentExplorationGroup = undefined;
         this.addUserMessage(messageText(message));
       } else if (message.role === "assistant") {
         const text = normalizeFinalMarkdown(messageText(message));
-        if (text) this.addMarkdown(text);
+        if (text) {
+          currentExplorationGroup = undefined;
+          this.addAssistantDivider();
+          this.addMarkdown(text);
+        }
         for (const toolCall of messageToolCalls(message)) {
-          pendingToolStatuses.set(
-            toolCall.id,
-            {
-              toolCall,
-              message: this.addMutableStatusMessage(renderToolStatus(toolCall, undefined, this.options.color && Boolean(process.stdout.isTTY)), TOOL_STATUS_OPTIONS)
-            }
-          );
+          addToolStatus(toolCall);
         }
       } else if (message.role === "toolResult") {
         const pending = pendingToolStatuses.get(message.toolCallId);
         if (pending) {
-          pending.message.setText(renderToolStatus(pending.toolCall, message, this.options.color && Boolean(process.stdout.isTTY)));
+          pending.entry.result = message;
+          pending.message.setText(
+            pending.group
+              ? renderExplorationToolGroupStatus(pending.group.entries, this.options.color && Boolean(process.stdout.isTTY))
+              : renderToolStatus(pending.entry.toolCall, message, this.options.color && Boolean(process.stdout.isTTY))
+          );
           pendingToolStatuses.delete(message.toolCallId);
         } else {
           this.addStatusMessage(renderToolResult(message, this.options.color && Boolean(process.stdout.isTTY)), TOOL_STATUS_OPTIONS);
@@ -1092,6 +1238,10 @@ export class PiTuiConversationView implements InteractiveTuiView {
     const markdown = new Markdown(text, 2, 0, this.theme.markdown);
     this.addComponent(markdown);
     return markdown;
+  }
+
+  private addAssistantDivider(): void {
+    this.addComponent(new AssistantDividerComponent(this.theme));
   }
 
   private addMutableMarkdown(prefix: string, options: { dim?: boolean } = {}): MutableTuiMessage {
@@ -1267,8 +1417,9 @@ function wrapStatusText(text: string, width: number, continuationIndent: number)
   const wrapWidth = Math.max(1, width - visibleWidth(indent));
   const lines: string[] = [];
   for (const rawLine of text.split("\n")) {
-    for (const line of wrapTextWithAnsi(rawLine, wrapWidth)) {
-      lines.push(lines.length === 0 ? line : indent + line);
+    const wrapped = wrapTextWithAnsi(rawLine, wrapWidth);
+    for (const [index, line] of wrapped.entries()) {
+      lines.push(index === 0 ? line : indent + line);
     }
   }
   return lines.length > 0 ? lines : [""];
