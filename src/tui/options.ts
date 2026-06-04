@@ -6,13 +6,16 @@ import type { CompactionSettings } from "../types.js";
 import type { McpRuntimeConfig } from "../mcp/config.js";
 import type { SkillRuntimeConfig } from "../skills/model.js";
 
-const DEFAULT_PROVIDER = "openai";
-const DEFAULT_MODEL = "gpt-5.2-codex";
+export const DEFAULT_TUI_PROVIDER = "openai";
+export const DEFAULT_TUI_MODEL = "gpt-5.2-codex";
+
+export type TuiModelSource = "default" | "user-settings" | "project-settings" | "project-config" | "environment" | "cli";
 
 export interface TuiOptions {
   cwd: string;
   provider: string;
   modelId: string;
+  modelSource: TuiModelSource;
   baseUrl?: string;
   showThinking: boolean;
   color: boolean;
@@ -48,19 +51,20 @@ export function parseTuiArgs(
 
   const options: TuiOptions = {
     cwd: prelude.cwd,
-    provider: DEFAULT_PROVIDER,
-    modelId: DEFAULT_MODEL,
+    provider: DEFAULT_TUI_PROVIDER,
+    modelId: DEFAULT_TUI_MODEL,
+    modelSource: "default",
     showThinking: false,
     color: env.NO_COLOR === undefined
   };
 
   try {
     if (parseOptions.loadUserSettings !== false) {
-      applyConfig(options, loadUserSettings());
+      applyConfig(options, loadUserSettings(), "user-settings");
     }
     const loaded = loadTuiConfig(prelude.cwd, prelude.configPath);
     if (loaded) {
-      applyConfig(options, loaded.config);
+      applyConfig(options, loaded.config, configModelSource(loaded.path));
       options.configPath = loaded.path;
     }
   } catch (error) {
@@ -135,6 +139,7 @@ export function parseTuiArgs(
       const value = readValue(args, ++index, arg);
       if ("error" in value) return value;
       options.provider = value.value;
+      options.modelSource = "cli";
       providerExplicit = true;
       continue;
     }
@@ -142,7 +147,7 @@ export function parseTuiArgs(
     if (arg === "--model" || arg === "-m") {
       const value = readValue(args, ++index, arg);
       if ("error" in value) return value;
-      applyModelValue(options, value.value, providerExplicit);
+      applyModelValue(options, value.value, providerExplicit, "cli");
       continue;
     }
 
@@ -232,11 +237,22 @@ Interactive commands:
 `;
 }
 
-function applyConfig(options: TuiOptions, config: TuiConfig): void {
+function applyConfig(options: TuiOptions, config: TuiConfig, modelSource: TuiModelSource): void {
+  let modelChanged = false;
   if (config.cwd !== undefined) options.cwd = config.cwd;
-  if (config.provider !== undefined) options.provider = config.provider;
-  if (config.model !== undefined) applyModelValue(options, config.model, config.provider !== undefined);
-  if (config.modelId !== undefined) options.modelId = config.modelId;
+  if (config.provider !== undefined) {
+    options.provider = config.provider;
+    modelChanged = true;
+  }
+  if (config.model !== undefined) {
+    applyModelValue(options, config.model, config.provider !== undefined);
+    modelChanged = true;
+  }
+  if (config.modelId !== undefined) {
+    options.modelId = config.modelId;
+    modelChanged = true;
+  }
+  if (modelChanged) options.modelSource = modelSource;
   if (config.baseUrl !== undefined) options.baseUrl = config.baseUrl;
   if (config.showThinking !== undefined) options.showThinking = config.showThinking;
   if (config.color !== undefined) options.color = config.color;
@@ -252,8 +268,14 @@ function applyConfig(options: TuiOptions, config: TuiConfig): void {
 
 function applyEnv(options: TuiOptions, env: NodeJS.ProcessEnv): void {
   if (env.ARGON_CWD) options.cwd = resolve(env.ARGON_CWD);
-  if (env.ARGON_PROVIDER) options.provider = env.ARGON_PROVIDER;
-  if (env.ARGON_MODEL) options.modelId = env.ARGON_MODEL;
+  if (env.ARGON_PROVIDER) {
+    options.provider = env.ARGON_PROVIDER;
+    options.modelSource = "environment";
+  }
+  if (env.ARGON_MODEL) {
+    options.modelId = env.ARGON_MODEL;
+    options.modelSource = "environment";
+  }
   if (env.ARGON_BASE_URL) options.baseUrl = env.ARGON_BASE_URL;
   if (env.ARGON_SHOW_THINKING === "1" || env.ARGON_SHOW_THINKING === "true") options.showThinking = true;
 }
@@ -278,16 +300,22 @@ function readCliPrelude(args: string[], env: NodeJS.ProcessEnv): { cwd: string; 
   return configPath ? { cwd, configPath } : { cwd };
 }
 
-function applyModelValue(options: TuiOptions, value: string, providerExplicit: boolean): void {
+function applyModelValue(options: TuiOptions, value: string, providerExplicit: boolean, source?: TuiModelSource): void {
   const slash = value.indexOf("/");
   const hasSingleSlash = slash > 0 && value.indexOf("/", slash + 1) === -1;
   if (!providerExplicit && hasSingleSlash) {
     options.provider = value.slice(0, slash);
     options.modelId = value.slice(slash + 1);
+    if (source) options.modelSource = source;
     return;
   }
 
   options.modelId = value;
+  if (source) options.modelSource = source;
+}
+
+function configModelSource(path: string): TuiModelSource {
+  return path.endsWith("/settings.json") || path.endsWith("\\settings.json") ? "project-settings" : "project-config";
 }
 
 function readValue(args: string[], index: number, flag: string): { value: string; error?: never } | { error: string } {

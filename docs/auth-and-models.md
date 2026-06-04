@@ -64,5 +64,6 @@ Custom model/provider configuration lives in `~/.argon/models.json`. The file su
 ```
 
 `/model` lists models whose providers have configured auth and saves the selected model to `~/.argon/settings.json` as the next default.
+If that saved default later disappears from the model registry, Argon starts with the built-in default model instead of failing before the TUI opens.
 
 `/thinking` and `/reasoning` list the thinking levels supported by the active model and save the selected level to `~/.argon/settings.json`. Argon accepts `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`; `off` disables the provider reasoning option for future requests.

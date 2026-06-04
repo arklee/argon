@@ -4,6 +4,8 @@ import { join } from "node:path";
 import type { AssistantMessage, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { Editor, TUI, type Terminal } from "@earendil-works/pi-tui";
+import { AuthStorage } from "../src/auth/storage.js";
+import { ModelRegistry } from "../src/model/registry.js";
 import {
   InteractiveEventController,
   PiTuiConversationView,
@@ -27,6 +29,7 @@ import {
   retainReferencedAttachments
 } from "../src/tui/image-paste.js";
 import { parseTuiArgs } from "../src/tui/options.js";
+import { resolveTuiModel } from "../src/tui/model.js";
 import { PickerComponent } from "../src/tui/selectors.js";
 import { createArgonTuiTheme } from "../src/tui/theme.js";
 import type { TurnContext } from "../src/types.js";
@@ -148,6 +151,7 @@ describe("TUI options", () => {
     expect(parsed.options).toMatchObject({
       provider: "google",
       modelId: "gemini-3-flash-preview",
+      modelSource: "project-settings",
       showThinking: true
     });
   });
@@ -173,6 +177,35 @@ describe("TUI options", () => {
     expect(createInteractiveRunOptions({ reasoning: "off" } as any)).toEqual({ reasoning: "off" });
     expect(createInteractiveRunOptions({ reasoning: "high" } as any)).toEqual({ reasoning: "high" });
     expect(createInteractiveRunOptions({} as any)).toEqual({});
+  });
+
+  it("falls back when a saved settings model no longer exists", () => {
+    const registry = ModelRegistry.inMemory(AuthStorage.inMemory());
+    const parsed = parseTuiArgs([], {});
+    const resolved = resolveTuiModel(
+      {
+        ...parsed.options!,
+        provider: "deleted-provider",
+        modelId: "deleted-model",
+        modelSource: "user-settings"
+      },
+      registry
+    );
+
+    expect(resolved.model).toMatchObject({ provider: "openai", id: "gpt-5.2-codex" });
+    expect(resolved.fallback).toEqual({
+      fromProvider: "deleted-provider",
+      fromModelId: "deleted-model",
+      toProvider: "openai",
+      toModelId: "gpt-5.2-codex"
+    });
+  });
+
+  it("keeps explicit missing CLI models as startup errors", () => {
+    const registry = ModelRegistry.inMemory(AuthStorage.inMemory());
+    const parsed = parseTuiArgs(["--provider", "deleted-provider", "--model", "deleted-model"], {});
+
+    expect(() => resolveTuiModel(parsed.options!, registry)).toThrow("Unknown model for deleted-provider: deleted-model");
   });
 
   it("renders the OAuth browser hint as a terminal hyperlink", () => {

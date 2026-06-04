@@ -13,6 +13,7 @@ import { SessionManager } from "../session/manager.js";
 import type { AgentEvent, AgentRuntimeConfig } from "../types.js";
 import { runInteractiveTui } from "./app.js";
 import { TuiEventRenderer } from "./events.js";
+import { resolveTuiModel } from "./model.js";
 import { parseTuiArgs, renderHelp, type TuiOptions } from "./options.js";
 import { selectWithTui } from "./selectors.js";
 import { createArgonTuiTheme } from "./theme.js";
@@ -41,7 +42,13 @@ async function main(): Promise<void> {
   if (options.apiKeyEnv && process.env[options.apiKeyEnv]) authStorage.setRuntimeApiKey(options.provider, process.env[options.apiKeyEnv]!);
   const modelRegistry = ModelRegistry.create(authStorage);
   const session = await createSessionManager(options);
-  const model = resolveModel(options, modelRegistry);
+  const resolvedModel = resolveTuiModel(options, modelRegistry);
+  if (resolvedModel.fallback) {
+    process.stderr.write(
+      `argon: saved model ${resolvedModel.fallback.fromProvider}/${resolvedModel.fallback.fromModelId} was not found; using ${resolvedModel.fallback.toProvider}/${resolvedModel.fallback.toModelId}\n`
+    );
+  }
+  const model = resolvedModel.model;
   const renderer = new TuiEventRenderer({
     color: options.color && Boolean(process.stdout.isTTY),
     showThinking: options.showThinking
@@ -148,17 +155,6 @@ async function runPrompt(
   }
 
   return exitCode;
-}
-
-function resolveModel(options: TuiOptions, modelRegistry: ModelRegistry): Model<Api> {
-  const providerId = options.provider;
-  const modelId = options.modelId;
-  const model = modelRegistry.find(providerId, modelId);
-  if (!model) {
-    throw new Error(`Unknown model for ${providerId}: ${modelId}`);
-  }
-
-  return options.baseUrl ? ({ ...model, baseUrl: options.baseUrl } as Model<Api>) : (model as Model<Api>);
 }
 
 function isFailure(event: AgentEvent): boolean {
