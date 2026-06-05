@@ -1,5 +1,4 @@
 import {
-  Box,
   CombinedAutocompleteProvider,
   Editor,
   Input,
@@ -997,27 +996,46 @@ class TextInputComponent implements Component {
 }
 
 class SubmittedInputComponent implements Component {
-  private readonly box: Box;
+  private readonly markdown: Markdown;
 
   constructor(
     private readonly text: string,
-    theme: ArgonTuiTheme
+    private readonly theme: ArgonTuiTheme
   ) {
-    this.box = new Box(1, 1, theme.ansi.userMessageBg);
-    this.box.addChild(
-      new Markdown(text, 0, 0, theme.markdown, {
-        color: theme.ansi.userMessageText
-      })
-    );
+    this.markdown = new Markdown(text, 0, 0, theme.markdown);
   }
 
   render(width: number): string[] {
-    return this.box.render(width);
+    if (width <= 0) return [];
+
+    const panelWidth = submittedInputWidth(width);
+    const rule = this.theme.editor.borderColor("─".repeat(panelWidth));
+    const prompt = `${this.theme.editor.borderColor("●")} `;
+    const promptWidth = visibleWidth(prompt);
+    const bodyWidth = Math.max(1, panelWidth - promptWidth);
+    const contentLines = this.markdown.render(bodyWidth);
+    const bodyLines = contentLines.length > 0 ? contentLines : [""];
+
+    return [
+      rule,
+      ...bodyLines.map((line, index) => padSubmittedInputLine(`${index === 0 ? prompt : " ".repeat(promptWidth)}${line}`, panelWidth)),
+      rule
+    ];
   }
 
   invalidate(): void {
-    this.box.invalidate();
+    this.markdown.invalidate();
   }
+}
+
+function submittedInputWidth(width: number): number {
+  if (width <= 8) return Math.max(1, width);
+  return width - 4;
+}
+
+function padSubmittedInputLine(line: string, width: number): string {
+  if (visibleWidth(line) > width) return truncateToWidth(line, width, "", true);
+  return line + " ".repeat(Math.max(0, width - visibleWidth(line)));
 }
 
 class AssistantDividerComponent implements Component {

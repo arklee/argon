@@ -622,7 +622,7 @@ describe("Interactive TUI layout", () => {
     view.dispose();
   });
 
-  it("renders submitted user prompts as background blocks and separates assistant text", () => {
+  it("renders submitted user prompts as short input frames and separates assistant text", () => {
     const terminal = new FakeTerminal();
     const tui = new TUI(terminal);
     const theme = createArgonTuiTheme(false);
@@ -641,11 +641,13 @@ describe("Interactive TUI layout", () => {
     const renderedUser = stripAnsi(tui.children[editorIndex - 3]!.render(40).join("\n"));
     const renderedDivider = stripAnsi(tui.children[editorIndex - 2]!.render(40).join("\n"));
     const renderedAssistant = stripAnsi(tui.children[editorIndex - 1]!.render(40).join("\n"));
+    const userLines = renderedUser.split("\n");
 
-    expect(renderedUser).toContain(" hello");
+    expect(userLines).toEqual(["─".repeat(36), `● hello${" ".repeat(29)}`, "─".repeat(36)]);
     expect(renderedUser).not.toContain("╭");
     expect(renderedUser).not.toContain("❯");
     expect(renderedUser).not.toContain("you");
+    expect(renderedUser).not.toContain("enter to submit");
     expect(renderedDivider).toContain("assistant");
     expect(renderedDivider.split("\n")[0]).toBe("");
     expect(renderedDivider.split("\n").at(-1)).toBe("");
