@@ -60,6 +60,12 @@ describe("TUI options", () => {
     expect(parsed.options).toMatchObject({ reasoning: "off" });
   });
 
+  it("parses rpc mode", () => {
+    const parsed = parseTuiArgs(["--mode", "rpc"], {});
+    expect(parsed.options).toMatchObject({ mode: "rpc" });
+    expect(parseTuiArgs(["--mode", "daemon"], {}).error).toBe("Invalid --mode value: daemon");
+  });
+
   it("does not expose max iterations as a TUI option", () => {
     const parsed = parseTuiArgs(["--max-iterations", "3"], {});
     expect(parsed.error).toBe("Unknown argument: --max-iterations");

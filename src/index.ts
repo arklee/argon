@@ -16,6 +16,7 @@ export { AuthStorage, FileAuthStorageBackend, InMemoryAuthStorageBackend, getDef
 export { ModelRegistry, getDefaultModelsPath, parseModelSpecifier } from "./model/registry.js";
 export { getUserSettingsPath, loadUserSettings, saveDefaultModel, saveDefaultReasoning } from "./config/settings.js";
 export * from "./mcp/index.js";
+export * from "./rpc/index.js";
 export * from "./skills/index.js";
 export {
   THINKING_LEVELS,

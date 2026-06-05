@@ -12,6 +12,7 @@ export const DEFAULT_TUI_MODEL = "gpt-5.2-codex";
 export type TuiModelSource = "default" | "user-settings" | "project-settings" | "project-config" | "environment" | "cli";
 
 export interface TuiOptions {
+  mode: "tui" | "rpc";
   cwd: string;
   provider: string;
   modelId: string;
@@ -50,6 +51,7 @@ export function parseTuiArgs(
   if (prelude.error) return { error: prelude.error };
 
   const options: TuiOptions = {
+    mode: "tui",
     cwd: prelude.cwd,
     provider: DEFAULT_TUI_PROVIDER,
     modelId: DEFAULT_TUI_MODEL,
@@ -89,6 +91,16 @@ export function parseTuiArgs(
 
     if (arg === "--show-thinking") {
       options.showThinking = true;
+      continue;
+    }
+
+    if (arg === "--mode") {
+      const value = readValue(args, ++index, arg);
+      if ("error" in value) return value;
+      if (value.value !== "tui" && value.value !== "rpc") {
+        return { error: `Invalid --mode value: ${value.value}` };
+      }
+      options.mode = value.value;
       continue;
     }
 
@@ -206,6 +218,7 @@ export function renderHelp(): string {
   return `Usage: argon [options]
 
 Options:
+      --mode <tui|rpc>           Run the interactive TUI or stdin/stdout JSONL RPC server
       --config <path>            Config file path; defaults to argon.config.json discovery
   -m, --model <id|provider/id>   Model id, or provider/model shortcut
       --provider <provider>      Provider for --model when not embedded

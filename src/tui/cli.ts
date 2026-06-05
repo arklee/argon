@@ -8,6 +8,7 @@ import {
 import { AuthStorage } from "../auth/storage.js";
 import { ModelRegistry } from "../model/registry.js";
 import { configureGlobalProxyFromEnv } from "../provider/proxy.js";
+import { runArgonRpcServer } from "../rpc/server.js";
 import { AgentRuntime } from "../runtime.js";
 import { SessionManager } from "../session/manager.js";
 import type { AgentEvent, AgentRuntimeConfig } from "../types.js";
@@ -58,6 +59,19 @@ async function main(): Promise<void> {
     running: false,
     abort: () => runtime.abort()
   };
+
+  if (options.mode === "rpc") {
+    await runArgonRpcServer({
+      runtime,
+      modelRegistry,
+      cwd: options.cwd,
+      defaultRunOptions: {
+        ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+        ...(options.compaction ? { compaction: options.compaction } : {})
+      }
+    });
+    return;
+  }
 
   if (options.once !== undefined) {
     process.exitCode = await runPrompt(runtime, renderer, options.once, options, state);
