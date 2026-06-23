@@ -12,6 +12,11 @@ export interface RpcModel {
   provider: string;
   id: string;
   name?: string;
+  auth?: {
+    configured: boolean;
+    source?: string;
+    label?: string;
+  };
 }
 
 export interface RpcSessionState {
@@ -59,6 +64,14 @@ export interface RpcThreadDeleteResult {
   deleted: true;
   path: string;
   state: RpcSessionState;
+}
+
+export interface RpcModelListResult {
+  models: RpcModel[];
+}
+
+export interface RpcModelSetResult {
+  model: RpcModel;
 }
 
 export interface RpcNotification {
@@ -128,6 +141,14 @@ export function startTurn(input: string): Promise<RpcTurnStartResult> {
 
 export function interruptTurn(runId?: string): Promise<{ interrupted: boolean; runId?: string }> {
   return rpcRequest("turn/interrupt", runId ? { runId } : {});
+}
+
+export function listModels(): Promise<RpcModelListResult> {
+  return rpcRequest<RpcModelListResult>("model/list");
+}
+
+export function setModel(provider: string, modelId: string): Promise<RpcModelSetResult> {
+  return rpcRequest<RpcModelSetResult>("model/set", { provider, modelId });
 }
 
 export async function onRpcNotification(listener: (notification: RpcNotification) => void): Promise<UnlistenFn> {

@@ -142,6 +142,192 @@
     -webkit-line-clamp: 2;
     overflow: hidden;
   }
+
+  .thread-row-interactive:hover {
+    background-color: color-mix(in oklab, var(--foreground) 6%, transparent);
+  }
+
+  .thread-row-active {
+    background-color: color-mix(in oklab, var(--foreground) 8%, transparent);
+    color: var(--foreground);
+  }
+
+  .dark .thread-row-interactive:hover,
+  .dark .thread-row-active {
+    background-color: var(--sidebar-accent);
+    color: var(--sidebar-accent-foreground);
+  }
+
+  .composer-shell {
+    border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+    border-radius: 1.5rem;
+    background: color-mix(in oklab, var(--background) 96%, var(--foreground) 4%);
+    box-shadow: 0 18px 60px color-mix(in oklab, var(--foreground) 10%, transparent);
+  }
+
+  .dark .composer-shell {
+    background: color-mix(in oklab, var(--card) 86%, transparent);
+    box-shadow: 0 18px 60px rgb(0 0 0 / 28%);
+  }
+
+  .conversation-run-status {
+    display: flex;
+    width: fit-content;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.65rem;
+    color: var(--muted-foreground);
+    font-size: 0.875rem;
+  }
+
+  .conversation-run-status > span:first-of-type {
+    color: var(--foreground);
+    font-weight: 500;
+  }
+
+  .conversation-assistant {
+    max-width: 100%;
+    color: var(--foreground);
+    font-size: 0.9375rem;
+    line-height: 1.75;
+    overflow-wrap: anywhere;
+  }
+
+  .conversation-tool {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    width: fit-content;
+    max-width: 100%;
+    border-left: 2px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+    padding: 0.3rem 0 0.3rem 0.75rem;
+    color: var(--muted-foreground);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+
+  .conversation-tool-active {
+    border-left-color: var(--primary);
+    color: var(--foreground);
+  }
+
+  .conversation-thinking {
+    width: 100%;
+    border-left: 2px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+    padding-left: 0.75rem;
+    color: var(--muted-foreground);
+    font-size: 0.8125rem;
+    line-height: 1.55;
+  }
+
+  .conversation-thinking summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    list-style: none;
+    color: var(--muted-foreground);
+    font-weight: 500;
+  }
+
+  .conversation-thinking summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .conversation-thinking > div {
+    margin-top: 0.5rem;
+    max-height: 14rem;
+    overflow: auto;
+    white-space: pre-wrap;
+  }
+
+  .markdown-body > * + * {
+    margin-top: 0.85rem;
+  }
+
+  .markdown-body p {
+    margin: 0;
+  }
+
+  .markdown-body strong {
+    font-weight: 650;
+  }
+
+  .markdown-body code {
+    border-radius: 0.45rem;
+    background: color-mix(in oklab, var(--foreground) 8%, transparent);
+    padding: 0.08rem 0.35rem;
+    font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.88em;
+  }
+
+  .markdown-body ul,
+  .markdown-body ol {
+    margin: 0;
+    padding-left: 1.35rem;
+  }
+
+  .markdown-body li + li {
+    margin-top: 0.35rem;
+  }
+
+  .markdown-body blockquote {
+    margin: 0;
+    border-left: 3px solid var(--border);
+    padding-left: 0.9rem;
+    color: var(--muted-foreground);
+  }
+
+  .markdown-h1,
+  .markdown-h2,
+  .markdown-h3 {
+    color: var(--foreground);
+    font-weight: 650;
+    line-height: 1.35;
+  }
+
+  .markdown-h1 {
+    font-size: 1.25rem;
+  }
+
+  .markdown-h2 {
+    font-size: 1.08rem;
+  }
+
+  .markdown-h3 {
+    font-size: 0.98rem;
+  }
+
+  .markdown-code-block {
+    position: relative;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: color-mix(in oklab, var(--foreground) 5%, transparent);
+    padding: 0.9rem;
+    color: var(--foreground);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+  }
+
+  .dark .markdown-code-block {
+    background: rgb(5 7 12 / 64%);
+  }
+
+  .markdown-code-block code {
+    display: block;
+    background: transparent;
+    padding: 0;
+    white-space: pre;
+  }
+
+  .markdown-code-language {
+    display: block;
+    margin-bottom: 0.55rem;
+    color: var(--muted-foreground);
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+  }
 }
 
 #root {

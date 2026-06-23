@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import {
   Activity,
   Bell,
   Bot,
+  Brain,
   ChevronDown,
   Circle,
   Code2,
@@ -16,12 +17,15 @@ import {
   PanelRight,
   PanelRightClose,
   PanelRightOpen,
-  Play,
+  Plus,
   Search,
   SendHorizonal,
   Settings,
+  Moon,
+  Sparkles,
   SquareTerminal,
   StopCircle,
+  Sun,
   Trash2,
   Wrench,
   type LucideIcon,
@@ -78,12 +82,14 @@ import {
   initializeRpc,
   interruptTurn,
   isTauriRuntime,
+  listModels,
   listThreads,
   newThread,
   onRpcError,
   onRpcLog,
   onRpcNotification,
   resumeThread,
+  setModel,
   startRpc,
   startTurn,
   type AgentMessage,
@@ -95,12 +101,13 @@ import {
 
 interface TimelineViewItem {
   id: string;
-  actor: "user" | "assistant" | "tool";
+  actor: "user" | "assistant" | "tool" | "thinking";
   icon: LucideIcon;
   title: string;
   body: string;
   meta?: string;
   state?: "active" | "done" | "muted";
+  toolCallId?: string;
 }
 
 interface RpcUiState {
@@ -120,15 +127,24 @@ const statusLabel: Record<ThreadSummary["status"], string> = {
   archived: "Archived"
 };
 
+type ThemeMode = "light" | "dark";
+
+const themeStorageKey = "argon-gui-theme";
+
 function App() {
   const [threads, setThreads] = useState<ThreadSummary[]>(() => threadGroups.flatMap((group) => group.threads));
   const [activeThreadId, setActiveThreadId] = useState("desktop-gui");
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [rightInspectorOpen, setRightInspectorOpen] = useState(true);
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof window === "undefined") return "dark";
+    return window.localStorage.getItem(themeStorageKey) === "light" ? "light" : "dark";
+  });
   const [composer, setComposer] = useState("");
   const [items, setItems] = useState<TimelineViewItem[]>(() => timeline);
   const [rpcLogs, setRpcLogs] = useState<string[]>(() => terminalLines);
   const [rpc, setRpc] = useState<RpcUiState>(() => ({ available: isTauriRuntime(), connected: false, running: false }));
+  const [models, setModels] = useState<RpcModel[]>([]);
   const activeThread = useMemo(
     () => threads.find((thread) => thread.id === activeThreadId) ?? threads[0] ?? threadGroups[0].threads[0],
     [activeThreadId, threads]
@@ -147,6 +163,12 @@ function App() {
     setThreads(mapped.length > 0 ? mapped : [stateToThread(state)]);
     if (state?.path) setActiveThreadId(state.path);
   }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.style.colorScheme = theme;
+    window.localStorage.setItem(themeStorageKey, theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -176,6 +198,8 @@ function App() {
           model: initialized.state.model,
           runId: initialized.state.running?.runId
         });
+        const listedModels = await listModels();
+        if (!disposed) setModels(listedModels.models);
         await reloadThreads(initialized.state);
         await reloadMessages();
       } catch (error) {
@@ -312,6 +336,23 @@ function App() {
     }
   }, [composer, rpc.connected]);
 
+  const handleSelectModel = useCallback(
+    async (model: RpcModel) => {
+      if (!rpc.connected) {
+        setRpc((current) => ({ ...current, model }));
+        return;
+      }
+      try {
+        const result = await setModel(model.provider, model.id);
+        setRpc((current) => ({ ...current, model: result.model }));
+        setRpcLogs((logs) => appendLog(logs, `model selected: ${result.model.provider}/${result.model.id}`));
+      } catch (error) {
+        setRpcLogs((logs) => appendLog(logs, `model error: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+    [rpc.connected]
+  );
+
   const handleStop = useCallback(async () => {
     if (!rpc.connected) return;
     try {
@@ -323,15 +364,17 @@ function App() {
   }, [rpc.connected, rpc.runId]);
 
   return (
-    <main className="dark min-h-screen overflow-hidden bg-background text-foreground">
+    <main className="min-h-screen overflow-hidden bg-background text-foreground">
       <div className="flex h-screen flex-col bg-[radial-gradient(circle_at_50%_0%,color-mix(in_oklch,var(--primary)_10%,transparent),transparent_34%),var(--background)]">
         <TopBar
           activeThread={activeThread}
           leftSidebarOpen={leftSidebarOpen}
           rightInspectorOpen={rightInspectorOpen}
           rpc={rpc}
+          theme={theme}
           onToggleLeftSidebar={() => setLeftSidebarOpen((open) => !open)}
           onToggleRightInspector={() => setRightInspectorOpen((open) => !open)}
+          onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
         />
         <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1" data-argon-layout="workspace">
           {leftSidebarOpen ? (
@@ -352,9 +395,11 @@ function App() {
             <ConversationPane
               composer={composer}
               items={items}
+              models={models}
               rpc={rpc}
               setComposer={setComposer}
               thread={activeThread}
+              onSelectModel={handleSelectModel}
               onSend={handleSend}
               onStop={handleStop}
             />
@@ -378,17 +423,20 @@ function TopBar({
   leftSidebarOpen,
   rightInspectorOpen,
   rpc,
+  theme,
   onToggleLeftSidebar,
-  onToggleRightInspector
+  onToggleRightInspector,
+  onToggleTheme
 }: {
   activeThread: ThreadSummary;
   leftSidebarOpen: boolean;
   rightInspectorOpen: boolean;
   rpc: RpcUiState;
+  theme: ThemeMode;
   onToggleLeftSidebar: () => void;
   onToggleRightInspector: () => void;
+  onToggleTheme: () => void;
 }) {
-  const modelLabel = rpc.model ? `${rpc.model.provider}/${rpc.model.id}` : "GPT-5 Codex";
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b bg-background/85 px-3 backdrop-blur">
       <div className="flex min-w-0 items-center gap-3">
@@ -427,21 +475,6 @@ function TopBar({
           <Activity className="size-3" />
           {rpc.connected ? (rpc.running ? "Running" : "RPC ready") : "Preview"}
         </Badge>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="max-sm:w-10 max-sm:px-0">
-              <span className="max-sm:hidden">{modelLabel}</span>
-              <ChevronDown data-icon="inline-end" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuGroup>
-              <DropdownMenuItem>GPT-5 Codex</DropdownMenuItem>
-              <DropdownMenuItem>Claude Sonnet</DropdownMenuItem>
-              <DropdownMenuItem>Local provider</DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -454,6 +487,19 @@ function TopBar({
             </Button>
           </TooltipTrigger>
           <TooltipContent>{rightInspectorOpen ? "Collapse inspector" : "Expand inspector"}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              onClick={onToggleTheme}
+            >
+              {theme === "dark" ? <Sun /> : <Moon />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{theme === "dark" ? "Light theme" : "Dark theme"}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -520,8 +566,8 @@ function ThreadSidebar({
                 <div
                   key={thread.id}
                   className={cn(
-                    "group/thread flex items-start gap-1 rounded-md px-2.5 py-2 transition hover:bg-sidebar-accent",
-                    activeThreadId === thread.id && "bg-sidebar-accent text-sidebar-accent-foreground"
+                    "thread-row-interactive group/thread flex items-start gap-1 rounded-md px-2.5 py-2 transition",
+                    activeThreadId === thread.id && "thread-row-active"
                   )}
                 >
                   <button className="min-w-0 flex-1 text-left" type="button" onClick={() => onSelectThread(thread.id)}>
@@ -603,17 +649,21 @@ function DeleteThreadButton({
 function ConversationPane({
   composer,
   items,
+  models,
   rpc,
   setComposer,
   thread,
+  onSelectModel,
   onSend,
   onStop
 }: {
   composer: string;
   items: TimelineViewItem[];
+  models: RpcModel[];
   rpc: RpcUiState;
   setComposer: (value: string) => void;
   thread: ThreadSummary;
+  onSelectModel: (model: RpcModel) => void;
   onSend: () => void;
   onStop: () => void;
 }) {
@@ -631,80 +681,121 @@ function ConversationPane({
             <span>compaction enabled</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onSend} disabled={rpc.running || composer.trim().length === 0}>
-            <Play data-icon="inline-start" />
-            {rpc.running ? "Running" : "Continue"}
-          </Button>
-          <Button variant="ghost" size="icon" aria-label="Stop run" onClick={onStop} disabled={!rpc.running}>
-            <StopCircle />
-          </Button>
-        </div>
+        <Button variant="ghost" size="icon" aria-label="Stop run" onClick={onStop} disabled={!rpc.running}>
+          <StopCircle />
+        </Button>
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-5 py-6">
           {rpc.error ? (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {rpc.error}
             </div>
           ) : null}
-          <div className="grid grid-cols-3 gap-2">
-            {buildMetrics(items, rpc).map((metric) => (
-              <div key={metric.label} className="rounded-md border bg-card/70 px-3 py-2">
-                <div className="text-[11px] text-muted-foreground">{metric.label}</div>
-                <div className="text-lg font-semibold">{metric.value}</div>
-              </div>
-            ))}
-          </div>
+          {rpc.running ? <RunProgress /> : null}
           {items.length === 0 ? (
-            <div className="rounded-md border bg-card/60 p-4 text-sm text-muted-foreground">
+            <div className="rounded-md border border-dashed bg-transparent p-4 text-sm text-muted-foreground">
               This thread is empty. Ask Argon to change this project from the composer below.
             </div>
           ) : null}
           {items.map((item) => (
-            <article key={item.id} className="group flex gap-3">
-              <div
-                className={cn(
-                  "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border bg-card text-muted-foreground",
-                  item.actor === "user" && "text-primary",
-                  item.state === "active" && "border-primary/50 text-primary"
-                )}
-              >
-                <item.icon className="size-4" />
-              </div>
-              <div className="min-w-0 flex-1 rounded-md border bg-card/65 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="truncate text-sm font-semibold">{item.title}</h2>
-                  {item.meta ? <span className="shrink-0 text-[11px] text-muted-foreground">{item.meta}</span> : null}
-                </div>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.body}</p>
-              </div>
-            </article>
+            <ConversationItem key={item.id} item={item} />
           ))}
         </div>
       </ScrollArea>
-      <Composer value={composer} running={rpc.running} onChange={setComposer} onSend={onSend} />
+      <Composer
+        model={rpc.model}
+        models={models}
+        value={composer}
+        running={rpc.running}
+        onChange={setComposer}
+        onSelectModel={onSelectModel}
+        onSend={onSend}
+      />
     </section>
   );
 }
 
+function RunProgress() {
+  return (
+    <div className="conversation-run-status">
+      <Sparkles className="size-3.5" />
+      <span>Working</span>
+      <span className="text-muted-foreground">streaming agent events</span>
+    </div>
+  );
+}
+
+function ConversationItem({ item }: { item: TimelineViewItem }) {
+  if (item.actor === "user") {
+    return (
+      <article className="flex justify-end">
+        <div className="max-w-[78%] rounded-2xl bg-muted px-4 py-2.5 text-sm leading-6 text-foreground shadow-sm">
+          {item.body}
+        </div>
+      </article>
+    );
+  }
+
+  if (item.actor === "thinking") {
+    return (
+      <details className="conversation-thinking" open={item.state === "active"}>
+        <summary>
+          <Brain className="size-3.5" />
+          <span>{item.state === "active" ? "Thinking" : "Thought"}</span>
+          {item.meta ? <span className="ml-auto">{item.meta}</span> : null}
+        </summary>
+        <div>{item.body}</div>
+      </details>
+    );
+  }
+
+  if (item.actor === "tool") {
+    return (
+      <article className={cn("conversation-tool", item.state === "active" && "conversation-tool-active")}>
+        <item.icon className="size-3.5" />
+        <div className="min-w-0 flex-1">
+          <div className="font-medium">{item.title}</div>
+          {item.body ? <div className="mt-1 truncate text-muted-foreground">{item.body}</div> : null}
+        </div>
+        {item.meta ? <span className="shrink-0 text-muted-foreground">{item.meta}</span> : null}
+      </article>
+    );
+  }
+
+  return (
+    <article className="conversation-assistant">
+      <MarkdownContent text={item.body} />
+      {item.meta ? <div className="mt-3 text-xs text-muted-foreground">{item.meta}</div> : null}
+    </article>
+  );
+}
+
 function Composer({
+  model,
+  models,
   value,
   running,
   onChange,
+  onSelectModel,
   onSend
 }: {
+  model?: RpcModel;
+  models: RpcModel[];
   value: string;
   running: boolean;
   onChange: (value: string) => void;
+  onSelectModel: (model: RpcModel) => void;
   onSend: () => void;
 }) {
+  const modelLabel = model ? modelDisplayName(model) : "GPT-5 Codex";
+  const menuModels = models.length > 0 ? models : previewModels(model);
   return (
-    <div className="shrink-0 border-t bg-background/95 p-4">
-      <div className="mx-auto max-w-3xl rounded-lg border bg-card shadow-lg shadow-black/15">
+    <div className="shrink-0 bg-background/95 px-4 pb-4 pt-2">
+      <div className="composer-shell mx-auto max-w-3xl">
         <Textarea
-          className="min-h-20 resize-none border-0 bg-transparent p-3 text-sm shadow-none focus-visible:ring-0"
-          placeholder="Ask Argon to change this project..."
+          className="min-h-[4.5rem] resize-none border-0 bg-transparent px-4 py-3 text-sm shadow-none focus-visible:ring-0"
+          placeholder="Ask for follow-up changes"
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
@@ -713,24 +804,41 @@ function Composer({
             onSend();
           }}
         />
-        <div className="flex items-center justify-between border-t px-2 py-2">
-          <div className="flex items-center gap-1 overflow-x-auto">
-            {quickActions.slice(0, 5).map((action, index) => (
-              <Button
-                key={action.label}
-                variant="ghost"
-                size="sm"
-                className={cn(index >= 3 && "max-sm:hidden")}
-                onClick={() => onChange(action.label.toLowerCase())}
-              >
-                <action.icon data-icon="inline-start" />
-                {action.label}
-              </Button>
-            ))}
+        <div className="flex items-center justify-between px-2.5 pb-2.5">
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" size="icon-sm" aria-label="Attach context">
+              <Plus />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="max-w-[220px] text-muted-foreground">
+                  <span className="truncate">{modelLabel}</span>
+                  <ChevronDown data-icon="inline-end" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-72">
+                <DropdownMenuGroup>
+                  {menuModels.slice(0, 12).map((candidate) => (
+                    <DropdownMenuItem
+                      key={`${candidate.provider}/${candidate.id}`}
+                      onSelect={() => onSelectModel(candidate)}
+                      className="flex-col items-start gap-0.5 py-2"
+                    >
+                      <div className="flex w-full items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate">{modelDisplayName(candidate)}</span>
+                        {model && candidate.provider === model.provider && candidate.id === model.id ? (
+                          <span className="text-[11px] text-muted-foreground">current</span>
+                        ) : null}
+                      </div>
+                      <span className="text-xs text-muted-foreground">{candidate.provider}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-          <Button size="sm" onClick={onSend} disabled={running || value.trim().length === 0}>
-            <SendHorizonal data-icon="inline-start" />
-            {running ? "Running" : "Send"}
+          <Button size="icon" aria-label="Send message" onClick={onSend} disabled={running || value.trim().length === 0}>
+            <SendHorizonal />
           </Button>
         </div>
       </div>
@@ -964,6 +1072,7 @@ function handleRpcNotification(
   if (notification.method === "turn/completed") {
     const reason = String(notification.params.reason ?? "stop");
     setRpc((current) => ({ ...current, running: false, runId: undefined }));
+    setItems((current) => finalizeActiveItems(current));
     setRpcLogs((logs) => appendLog(logs, `turn completed: ${reason}`));
     return;
   }
@@ -988,20 +1097,23 @@ function handleRpcNotification(
     setItems((current) => appendAssistantDelta(current, delta));
     return;
   }
+  if (event.type === "message_delta" && event.kind === "thinking") {
+    const delta = typeof event.delta === "string" ? event.delta : "";
+    if (!delta) return;
+    setItems((current) => appendThinkingDelta(current, delta));
+    return;
+  }
   if (event.type === "tool_call_end") {
     const toolCall = event.toolCall as Record<string, unknown> | undefined;
-    const name = String(toolCall?.name ?? "tool");
-    setItems((current) => [
-      ...current,
-      {
-        id: `tool-${Date.now()}-${current.length}`,
-        actor: "tool",
-        icon: Wrench,
-        title: `Tool call: ${name}`,
-        body: contentToText(toolCall?.arguments),
-        state: "done"
-      }
-    ]);
+    if (!toolCall) return;
+    setItems((current) => appendToolCall(current, toolCall));
+    return;
+  }
+  if (event.type === "tool_result") {
+    const toolCall = event.toolCall as Record<string, unknown> | undefined;
+    const result = event.result as Record<string, unknown> | undefined;
+    if (!toolCall || !result) return;
+    setItems((current) => completeToolCall(current, toolCall, result));
   }
 }
 
@@ -1015,7 +1127,7 @@ function appendAssistantDelta(items: TimelineViewItem[], delta: string): Timelin
     {
       id: `assistant-${Date.now()}`,
       actor: "assistant",
-      icon: Bot,
+      icon: Sparkles,
       title: "Argon",
       body: delta,
       state: "active"
@@ -1023,12 +1135,249 @@ function appendAssistantDelta(items: TimelineViewItem[], delta: string): Timelin
   ];
 }
 
-function buildMetrics(items: TimelineViewItem[], rpc: RpcUiState) {
+function appendThinkingDelta(items: TimelineViewItem[], delta: string): TimelineViewItem[] {
+  const last = items[items.length - 1];
+  if (last?.actor === "thinking" && last.state === "active") {
+    return [...items.slice(0, -1), { ...last, body: `${last.body}${delta}` }];
+  }
   return [
-    { label: "Messages", value: String(items.filter((item) => item.actor !== "tool").length) },
-    { label: "Tool calls", value: String(items.filter((item) => item.actor === "tool").length) },
-    { label: "Runtime", value: rpc.connected ? (rpc.running ? "Live" : "Ready") : "Preview" }
+    ...items,
+    {
+      id: `thinking-${Date.now()}`,
+      actor: "thinking",
+      icon: Brain,
+      title: "Thinking",
+      body: delta,
+      state: "active"
+    }
   ];
+}
+
+function appendToolCall(items: TimelineViewItem[], toolCall: Record<string, unknown>): TimelineViewItem[] {
+  const id = typeof toolCall.id === "string" ? toolCall.id : `tool-${Date.now()}-${items.length}`;
+  const description = describeToolDisplay(toolCall);
+  return [
+    ...items,
+    {
+      id: `tool-${id}`,
+      actor: "tool",
+      icon: Wrench,
+      title: description.title,
+      body: description.body,
+      meta: "running",
+      state: "active",
+      toolCallId: id
+    }
+  ];
+}
+
+function completeToolCall(
+  items: TimelineViewItem[],
+  toolCall: Record<string, unknown>,
+  result: Record<string, unknown>
+): TimelineViewItem[] {
+  const id = typeof toolCall.id === "string" ? toolCall.id : undefined;
+  const description = describeToolDisplay(toolCall, result);
+  const nextItem: TimelineViewItem = {
+    id: `tool-${id ?? Date.now()}`,
+    actor: "tool",
+    icon: Wrench,
+    title: description.title,
+    body: description.body,
+    meta: result.isError ? "error" : "done",
+    state: result.isError ? "muted" : "done",
+    ...(id ? { toolCallId: id } : {})
+  };
+  if (!id) return [...items, nextItem];
+  const index = items.findIndex((item) => item.toolCallId === id);
+  if (index === -1) return [...items, nextItem];
+  return [...items.slice(0, index), nextItem, ...items.slice(index + 1)];
+}
+
+function finalizeActiveItems(items: TimelineViewItem[]): TimelineViewItem[] {
+  return items.map((item) => (item.state === "active" ? { ...item, state: "done", meta: item.actor === "tool" ? "done" : item.meta } : item));
+}
+
+function describeToolDisplay(toolCall: Record<string, unknown>, result?: Record<string, unknown>): { title: string; body: string } {
+  const name = typeof toolCall.name === "string" ? toolCall.name : "tool";
+  const args = isRecord(toolCall.arguments) ? toolCall.arguments : {};
+  const isDone = result !== undefined;
+  const isError = Boolean(result?.isError);
+  const outcome = isError ? "failed" : isDone ? "done" : "running";
+  const output = result ? compactLine(contentToText(result.content), 160) : "";
+
+  if (name === "read" || name === "ls" || name === "grep") {
+    return {
+      title: outcome === "running" ? "Exploring" : isError ? "Explore failed" : "Explored",
+      body: output || explorationDetail(name, args)
+    };
+  }
+  if (name === "bash") {
+    return {
+      title: outcome === "running" ? "Running" : isError ? "Failed" : "Ran",
+      body: output || quoteIfNeeded(summaryValue(args.command)) || "(empty command)"
+    };
+  }
+  if (name === "write") {
+    return {
+      title: outcome === "running" ? "Writing" : isError ? "Write failed" : "Wrote",
+      body: output || summaryValue(args.path) || "(missing path)"
+    };
+  }
+  if (name === "edit") {
+    return {
+      title: outcome === "running" ? "Editing" : isError ? "Edit failed" : "Edited",
+      body: output || summaryValue(args.path) || "(missing path)"
+    };
+  }
+  return {
+    title: outcome === "running" ? "Calling" : isError ? "Call failed" : "Called",
+    body: output || `${name}(${compactLine(JSON.stringify(args), 120)})`
+  };
+}
+
+function explorationDetail(name: string, args: Record<string, unknown>): string {
+  if (name === "read") return `Read ${summaryValue(args.path) || "(missing path)"}`;
+  if (name === "ls") return `List ${summaryValue(args.path) || "."}`;
+  const pattern = summaryValue(args.pattern) || "(missing pattern)";
+  const path = summaryValue(args.path);
+  return `Search ${quoteIfNeeded(pattern)}${path ? ` in ${path}` : ""}`;
+}
+
+function summaryValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return "";
+  return String(value);
+}
+
+function quoteIfNeeded(value: string): string {
+  if (!value) return "";
+  return /\s/.test(value) ? JSON.stringify(value) : value;
+}
+
+function compactLine(value: string, maxLength: number): string {
+  const line = value.replace(/\s+/g, " ").trim();
+  return line.length > maxLength ? `${line.slice(0, Math.max(0, maxLength - 3))}...` : line;
+}
+
+function modelDisplayName(model: RpcModel): string {
+  return model.name || model.id;
+}
+
+function previewModels(model: RpcModel | undefined): RpcModel[] {
+  return [
+    model ?? { provider: "openai", id: "gpt-5.2-codex", name: "GPT-5 Codex" },
+    { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet" },
+    { provider: "local", id: "local-provider", name: "Local provider" }
+  ];
+}
+
+function MarkdownContent({ text }: { text: string }) {
+  return <div className="markdown-body">{renderMarkdownBlocks(text)}</div>;
+}
+
+function renderMarkdownBlocks(text: string): ReactNode[] {
+  const lines = text.split(/\r?\n/);
+  const blocks: ReactNode[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (line.trim().length === 0) {
+      index++;
+      continue;
+    }
+
+    if (line.startsWith("```")) {
+      const language = line.slice(3).trim();
+      const code: string[] = [];
+      index++;
+      while (index < lines.length && !lines[index]!.startsWith("```")) {
+        code.push(lines[index]!);
+        index++;
+      }
+      if (index < lines.length) index++;
+      blocks.push(
+        <pre key={`code-${index}`} className="markdown-code-block">
+          {language ? <span className="markdown-code-language">{language}</span> : null}
+          <code>{code.join("\n")}</code>
+        </pre>
+      );
+      continue;
+    }
+
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (heading) {
+      const level = heading[1]!.length;
+      const className = level === 1 ? "markdown-h1" : level === 2 ? "markdown-h2" : "markdown-h3";
+      blocks.push(
+        <div key={`heading-${index}`} className={className}>
+          {renderInlineMarkdown(heading[2]!)}
+        </div>
+      );
+      index++;
+      continue;
+    }
+
+    if (/^\s*[-*]\s+/.test(line)) {
+      const items: ReactNode[] = [];
+      while (index < lines.length && /^\s*[-*]\s+/.test(lines[index]!)) {
+        items.push(<li key={`li-${index}`}>{renderInlineMarkdown(lines[index]!.replace(/^\s*[-*]\s+/, ""))}</li>);
+        index++;
+      }
+      blocks.push(<ul key={`ul-${index}`}>{items}</ul>);
+      continue;
+    }
+
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items: ReactNode[] = [];
+      while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index]!)) {
+        items.push(<li key={`oli-${index}`}>{renderInlineMarkdown(lines[index]!.replace(/^\s*\d+\.\s+/, ""))}</li>);
+        index++;
+      }
+      blocks.push(<ol key={`ol-${index}`}>{items}</ol>);
+      continue;
+    }
+
+    if (line.startsWith(">")) {
+      const quote: string[] = [];
+      while (index < lines.length && lines[index]!.startsWith(">")) {
+        quote.push(lines[index]!.replace(/^>\s?/, ""));
+        index++;
+      }
+      blocks.push(<blockquote key={`quote-${index}`}>{renderInlineMarkdown(quote.join(" "))}</blockquote>);
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (
+      index < lines.length &&
+      lines[index]!.trim().length > 0 &&
+      !lines[index]!.startsWith("```") &&
+      !/^(#{1,3})\s+/.test(lines[index]!) &&
+      !/^\s*[-*]\s+/.test(lines[index]!) &&
+      !/^\s*\d+\.\s+/.test(lines[index]!) &&
+      !lines[index]!.startsWith(">")
+    ) {
+      paragraph.push(lines[index]!);
+      index++;
+    }
+    blocks.push(<p key={`p-${index}`}>{renderInlineMarkdown(paragraph.join(" "))}</p>);
+  }
+
+  return blocks;
+}
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  return text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={index}>{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
 }
 
 function appendLog(logs: string[], line: string): string[] {

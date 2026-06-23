@@ -37,8 +37,10 @@ The first implementation targets a modern coding-agent desktop shell inspired by
 - `ResizablePanelGroup` for left threads, center conversation, and right inspector.
 - `Tabs` for Terminal, Git, and Code views.
 - `ScrollArea` for thread lists, transcript, diff, terminal, and code preview.
-- `Textarea` composer with quick actions, Enter-to-send, and Shift+Enter newline entry.
+- Codex-style transcript rendering: user prompts as compact right-aligned bubbles, assistant replies as unframed markdown, and tool/thinking events as status rows.
+- Simplified `Textarea` composer with model selection inside the input frame, Enter-to-send, and Shift+Enter newline entry.
 - Collapsible left thread sidebar and right workspace inspector controls.
+- Light/dark theme switching with the current choice persisted in local storage.
 - Thread deletion with a confirmation dialog; connected desktop mode calls `thread/delete`.
 - `gui/src/rpc.ts` as the renderer-side command/event client for the Tauri RPC bridge.
 - Seed data in `gui/src/data.ts` as the browser-preview fallback when the app is not running inside Tauri.
