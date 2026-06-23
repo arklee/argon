@@ -14,6 +14,8 @@ import type {
   ArgonRpcShutdownResult,
   ArgonRpcThreadBranchParams,
   ArgonRpcThreadCompactParams,
+  ArgonRpcThreadDeleteParams,
+  ArgonRpcThreadDeleteResult,
   ArgonRpcThreadListResult,
   ArgonRpcThreadMessagesResult,
   ArgonRpcThreadResumeParams,
@@ -83,6 +85,10 @@ export class ArgonRpcClient {
 
   newThread(): Promise<ArgonRpcSessionState> {
     return this.request("thread/new") as Promise<ArgonRpcSessionState>;
+  }
+
+  deleteThread(params: ArgonRpcThreadDeleteParams): Promise<ArgonRpcThreadDeleteResult> {
+    return this.request("thread/delete", params) as Promise<ArgonRpcThreadDeleteResult>;
   }
 
   resumeThread(params: ArgonRpcThreadResumeParams): Promise<ArgonRpcSessionState> {

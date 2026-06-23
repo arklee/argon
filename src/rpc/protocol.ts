@@ -13,6 +13,7 @@ export const ARGON_RPC_METHODS = [
   "thread/messages",
   "thread/list",
   "thread/new",
+  "thread/delete",
   "thread/resume",
   "thread/tree",
   "thread/branch",
@@ -134,6 +135,16 @@ export interface ArgonRpcThreadBranchParams {
 
 export interface ArgonRpcThreadResumeParams {
   session: string;
+}
+
+export interface ArgonRpcThreadDeleteParams {
+  session: string;
+}
+
+export interface ArgonRpcThreadDeleteResult {
+  deleted: true;
+  path: string;
+  state: ArgonRpcSessionState;
 }
 
 export interface ArgonRpcThreadListResult {

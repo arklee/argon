@@ -1,4 +1,5 @@
 import { mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -115,6 +116,38 @@ describe("Argon RPC", () => {
 
     const sessions = await harness.client.listThreads();
     expect(sessions.sessions).toHaveLength(1);
+
+    await harness.stop();
+  });
+
+  it("deletes a session over RPC and switches away from the deleted active session", async () => {
+    const cwd = await tempDir();
+    const sessionDir = join(cwd, ".sessions");
+    const session = SessionManager.create(cwd, sessionDir);
+    const authStorage = AuthStorage.inMemory();
+    const modelRegistry = ModelRegistry.inMemory(authStorage);
+    faux = registerFauxProvider({ tokensPerSecond: 0, tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([fauxAssistantMessage("hello")]);
+
+    const runtime = new AgentRuntime({
+      model: faux.getModel(),
+      cwd,
+      tools: [],
+      apiKey: "test",
+      session
+    });
+    const harness = startHarness(runtime, { cwd, sessionDir, modelRegistry });
+    await harness.client.startTurn({ input: "delete me" });
+    await waitForNotification(harness.client, (notification) => notification.method === "turn/completed");
+
+    const listed = await harness.client.listThreads();
+    expect(listed.sessions).toHaveLength(1);
+    const deleted = await harness.client.deleteThread({ session: listed.sessions[0]!.path });
+
+    expect(deleted.deleted).toBe(true);
+    expect(existsSync(deleted.path)).toBe(false);
+    expect(deleted.state.path).not.toBe(deleted.path);
+    expect((await harness.client.listThreads()).sessions).toHaveLength(0);
 
     await harness.stop();
   });

@@ -24,6 +24,8 @@ import {
   type ArgonRpcShutdownResult,
   type ArgonRpcThreadBranchParams,
   type ArgonRpcThreadCompactParams,
+  type ArgonRpcThreadDeleteParams,
+  type ArgonRpcThreadDeleteResult,
   type ArgonRpcThreadResumeParams,
   type ArgonRpcTurnInterruptParams,
   type ArgonRpcTurnOptions,
@@ -120,6 +122,8 @@ export class ArgonRpcServer {
         return { sessions: SessionManager.list(this.options.cwd, this.options.sessionDir) };
       case "thread/new":
         return this.newThread();
+      case "thread/delete":
+        return this.deleteThread(parseThreadDeleteParams(params));
       case "thread/resume":
         return this.resumeThread(parseThreadResumeParams(params));
       case "thread/tree":
@@ -203,6 +207,18 @@ export class ArgonRpcServer {
     const session = SessionManager.openResolved(this.options.cwd, params.session, this.options.sessionDir);
     this.options.runtime.switchSession(session);
     return this.currentState();
+  }
+
+  private deleteThread(params: ArgonRpcThreadDeleteParams): ArgonRpcThreadDeleteResult {
+    if (this.activeRun) {
+      throw rpcError(ARGON_RPC_ERROR.busy, "Argon is already running", this.activeRun);
+    }
+    const target = SessionManager.openResolved(this.options.cwd, params.session, this.options.sessionDir).getSessionFile();
+    if (this.options.runtime.getSession()?.getSessionFile() === target) {
+      this.options.runtime.switchSession(SessionManager.create(this.options.cwd, this.options.sessionDir));
+    }
+    const deleted = SessionManager.deleteResolved(this.options.cwd, params.session, this.options.sessionDir);
+    return { ...deleted, state: this.currentState() };
   }
 
   private branchThread(params: ArgonRpcThreadBranchParams): ArgonRpcSessionState {
@@ -383,6 +399,11 @@ function parseTurnInterruptParams(value: unknown): ArgonRpcTurnInterruptParams {
 }
 
 function parseThreadResumeParams(value: unknown): ArgonRpcThreadResumeParams {
+  const params = requireParams(value);
+  return { session: requireString(params.session, "session") };
+}
+
+function parseThreadDeleteParams(value: unknown): ArgonRpcThreadDeleteParams {
   const params = requireParams(value);
   return { session: requireString(params.session, "session") };
 }

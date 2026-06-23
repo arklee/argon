@@ -1,6 +1,6 @@
 import type { AgentMessage, RunOptions, TurnContext } from "../types.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createCompactionSummaryMessage } from "../compaction/index.js";
@@ -220,6 +220,13 @@ export class SessionManager {
     const path = resolveSessionPath(cwd, value, sessionDir);
     if (!path) throw new Error(`No unique session found for: ${value}`);
     return SessionManager.open(path, sessionDir);
+  }
+
+  static deleteResolved(cwd: string, value: string, sessionDir = getDefaultSessionDir(cwd)): { deleted: true; path: string } {
+    const path = resolveSessionPath(cwd, value, sessionDir);
+    if (!path) throw new Error(`No unique session found for: ${value}`);
+    unlinkSync(path);
+    return { deleted: true, path };
   }
 
   getHeader(): SessionHeader {

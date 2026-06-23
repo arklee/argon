@@ -31,6 +31,7 @@ Supported methods:
 - `thread/messages`
 - `thread/list`
 - `thread/new`
+- `thread/delete`
 - `thread/resume`
 - `thread/tree`
 - `thread/branch`

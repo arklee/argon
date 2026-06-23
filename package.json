@@ -24,6 +24,9 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "gui:build": "npm --prefix gui run build",
+    "gui:dev": "npm --prefix gui run dev",
+    "gui:tauri:dev": "npm run build && npm --prefix gui run tauri:dev",
     "tui": "node dist/tui/cli.js",
     "test": "vitest --run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
